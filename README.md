@@ -9,6 +9,20 @@
 
 <img width="1428" height="580" alt="{285A97E6-9C0D-485C-B01E-DB1C802FDCEE}" src="https://github.com/user-attachments/assets/c16c4012-4789-457f-a3f3-f21482eb7bbd" />
 
+## 📌 Status Updates
+
+- ![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue)  
+  Clean the code.
+
+- ![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue)  
+  Released pre-processed TCGA WSI features.
+
+- ![update](https://img.shields.io/badge/2025--11--15-Update-green)  
+  Release source code.
+
+- ![update](https://img.shields.io/badge/2025--11--11-Initial_Release-green)  
+  Accepted by WACV2026.
+
 ## 1. Requirements
 
 - transformers=4.56.2
