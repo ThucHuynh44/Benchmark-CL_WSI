@@ -11,17 +11,10 @@
 
 ## 📌 Status Updates
 
-- ![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue)  
-  Clean the code.
-
-- ![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue)  
-  Released pre-processed TCGA WSI features.
-
-- ![update](https://img.shields.io/badge/2025--11--15-Update-green)  
-  Release source code.
-
-- ![update](https://img.shields.io/badge/2025--11--11-Initial_Release-green)  
-  Accepted by WACV2026.
+![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue) Clean the code.
+![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue) Released pre-processed TCGA WSI features.
+![update](https://img.shields.io/badge/2025--11--15-Update-green) Release source code.
+![update](https://img.shields.io/badge/2025--11--11-Accepted-green) Accepted by WACV2026.
 
 ## 1. Requirements
 
