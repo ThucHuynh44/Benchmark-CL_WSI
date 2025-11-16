@@ -8,8 +8,9 @@
 > Doanh C. Bui (NAIST)*, Ba Hung Ngo (CNU), Hoai Luan Pham (NAIST), Khang Nguyen (UIT), Mai K. Nguyen (ETIS), Yasuhiko Nakashima (NAIST)
 > *: Corresponding author
 
-## 1. Requirements
+<img width="1428" height="580" alt="{285A97E6-9C0D-485C-B01E-DB1C802FDCEE}" src="https://github.com/user-attachments/assets/c16c4012-4789-457f-a3f3-f21482eb7bbd" />
 
+## 1. Requirements
 
 - transformers=4.56.2
 - torch=2.5.1
