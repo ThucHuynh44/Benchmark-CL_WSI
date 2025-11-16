@@ -8,7 +8,6 @@ from tqdm.auto import tqdm
 from transformers import AutoModel
 import argparse
 import sys
-sys.path.append("/home/bui/continual_learning/WSIModelMerging")
 
 from utils import get_task_vector_norm, is_leaf_module, svd, get_task_vector_state_dict
 import matplotlib.pyplot as plt
