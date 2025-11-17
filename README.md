@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/WACV-2026-blue.svg" alt="WACV2026">
 </p>
 
-> Doanh C. Bui (NAIST)*, Ba Hung Ngo (CNU), Hoai Luan Pham (NAIST), Khang Nguyen (UIT), Mai K. Nguyen (ETIS), Yasuhiko Nakashima (NAIST)
+> Doanh C. Bui (NAIST)*, Ba Hung Ngo (CNU), Hoai Luan Pham (NAIST), Khang Nguyen (UIT), Maï K. Nguyen (ETIS), Yasuhiko Nakashima (NAIST)
 
 <img width="1428" height="580" alt="{285A97E6-9C0D-485C-B01E-DB1C802FDCEE}" src="https://github.com/user-attachments/assets/c16c4012-4789-457f-a3f3-f21482eb7bbd" />
 
