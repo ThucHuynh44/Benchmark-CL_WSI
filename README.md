@@ -21,7 +21,7 @@
 
 ![update](https://img.shields.io/badge/2025--11--11-DONE-green) Accepted by **WACV2026**.
 
-## 1. Requirement
+## 1. Requirements
 
 - transformers=4.56.2
 - torch=2.5.1
