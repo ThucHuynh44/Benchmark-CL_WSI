@@ -36,7 +36,7 @@
 
 We use a stream of six datasets TCGA-BRCA, TCGA-NSCLC, TCGA-RCC, TCGA-ESCA, TCGA-TGCT and TCGA-CESC in this study.
 
-For dataset preparation, you may need to download the WSIs from the TCGA portal and process them (patch extraction + feature extraction using TITAN’s vision encoder). If you are not familiar with this procedure, please refer to 20251020_WSI_processing.ipynb.
+For dataset preparation, you may need to download the WSIs from the TCGA portal and process them (patch extraction + feature extraction using TITAN’s vision encoder). If you are not familiar with this procedure, please refer to `20251020_WSI_processing.ipynb`.
 
 For convenience, we also provide pre-processed features that can be used directly with the scripts below *(will update later)*.
 
