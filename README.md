@@ -11,13 +11,15 @@
 
 ## 📌 Status Updates
 
+![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue) Update checkpoints.
+
 ![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue) Clean the code.
 
 ![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue) Released pre-processed TCGA WSI features.
 
 ![update](https://img.shields.io/badge/2025--11--15-DONE-green) Release source code.
 
-![update](https://img.shields.io/badge/2025--11--11-DONE-green) Accepted by WACV2026.
+![update](https://img.shields.io/badge/2025--11--11-DONE-green) Accepted by **WACV2026**.
 
 ## 1. Requirements
 
@@ -65,12 +67,15 @@ In this setup, `/path/to/dataset` refers to the root directory of the dataset. T
 
 ## 3. Implementation
 
-As described in the paper, we first train each model on its corresponding TCGA task using the pre-trained weights of TITAN’s slide aggregator (**Per-task finetuning**). We then merge these models using a continual model-merging method (**Model merging**).
+As described in the paper, we first define class-aware prompts to describe a set of class labels (**Class-aware Prompt Design**), get their embeddings using TITAN's text encoder, and train each model on its corresponding TCGA task using the pre-trained weights of TITAN’s slide aggregator (**Per-task finetuning**). We then merge these models using a continual model-merging method (**Model merging**).
 
 **Note:** You may need to be granted to access TITAN pre-trained slide aggregator by yourself. Please visit https://huggingface.co/MahmoodLab/TITAN.
 
+### 3.1. Class-aware Prompt Design
 
-### 3.1. Per-task finetuning
+For the six tasks in this study, please refer to `prompts_zeroshot.py`. You may design class-aware prompts for your new task by following the templates provided in that file.
+
+### 3.2. Per-task Finetuning
 
 Run the below python script to perform per-task finetuning:
 
@@ -80,7 +85,7 @@ python train_random_sampling.py --save_dir /path/to/finetuned/checkpoints
 
 where `/path/to/finetuned/checkpoints` is the directory where you want the model checkpoints to be stored.
 
-### 3.2. Model Merging
+### 3.3. Model Merging
 
 Run the following Python script to perform model merging:
 
@@ -95,7 +100,7 @@ Merged checkpoints are stored in `/path/to/merged/checkpoints/` (All tasks only 
 Note: Because we perform 10-fold cross-validation, the script generates 10 folders named `/path/to/merged/checkpoints/_fold_*`. Each folder contains num_tasks merged checkpoints (6 tasks in this study), representing the accumulated model state after each task. These intermediate checkpoints are used only for evaluating continual learning metrics such as forgetting, BWT, and FWT.
 
 ```
-/path/to/merged/checkpoints/_fold_0
+[/path/to/merged/checkpoints/]_fold_0
 |___merged_weight_opcm_random_sampling_fold_0_task_0.pth
 |___merged_weight_opcm_random_sampling_fold_0_task_1.pth
 |___merged_weight_opcm_random_sampling_fold_0_task_2.pth
