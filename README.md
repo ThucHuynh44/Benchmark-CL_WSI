@@ -1,7 +1,7 @@
 # [WACV 2026] MergeSlide: Continual Model Merging and Task-to-Class Prompt-Aligned Inference for Lifelong Learning on Whole Slide Images
 
 <p align="center">
-  <img src="https://img.shields.io/badge/arXiv-2401.xxxxx-b31b1b.svg" alt="arXiv">
+  <img src="https://img.shields.io/badge/arXiv-2511.13099-b31b1b.svg" alt="https://arxiv.org/pdf/2511.13099">
   <img src="https://img.shields.io/badge/WACV-2026-blue.svg" alt="WACV2026">
 </p>
 
