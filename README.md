@@ -63,7 +63,7 @@ split_dirs = ['/path/to/dataset/wsi_dataset_annotation/tcga_brca',
                 '/path/to/dataset/wsi_dataset_annotation/tcga_cesc']
 ```
 
-In this setup, `/path/to/dataset` refers to the root directory of the dataset. The wsi_dataset_annotation file and all feature directories under `/TCGA-*_processed/features` are provided in **Section 2.1: Access Datasets**.
+In this setup, `/path/to/dataset` refers to the root directory of the dataset. The `wsi_dataset_annotation` file and all feature directories under `/TCGA-*_processed/features` are provided in **Section 2.1: Access Datasets**.
 
 ## 3. Implementation
 
@@ -97,7 +97,7 @@ python opcm_mergeslide.py --num_tasks 6
 
 Merged checkpoints are stored in `/path/to/merged/checkpoints/` (All tasks only use one checkpoint for later inference).
 
-Note: Because we perform 10-fold cross-validation, the script generates 10 folders named `/path/to/merged/checkpoints/_fold_*`. Each folder contains num_tasks merged checkpoints (6 tasks in this study), representing the accumulated model state after each task. These intermediate checkpoints are used only for evaluating continual learning metrics such as forgetting, BWT, and FWT.
+Note: Because we perform 10-fold cross-validation, the script generates 10 folders named `/path/to/merged/checkpoints/_fold_*`. Each folder contains `num_tasks=6` merged checkpoints (6 tasks in this study), representing the accumulated model state after each task. These intermediate checkpoints are used only for evaluating continual learning metrics such as forgetting, BWT, and FWT.
 
 ```
 [/path/to/merged/checkpoints/]_fold_0
@@ -109,7 +109,7 @@ Note: Because we perform 10-fold cross-validation, the script generates 10 folde
 ```
 
 If you do not need to compute forgetting, BWT, or FWT, only the final checkpoint`merged_weight_opcm_random_sampling_fold_0_task_6.pth`
-is required for inference on all 6 tasks in this study.
+is required for inference on all `num_tasks=6` tasks in this study.
 
 ### 3.3. Evaluation
 
