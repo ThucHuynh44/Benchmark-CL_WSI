@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://arxiv.org/abs/2511.13099"><img src="https://img.shields.io/badge/arXiv-2511.13099-b31b1b.svg" alt="Arxiv"></a>
-  <a href="https://wacv2026.thecvf.com/"><img src="https://img.shields.io/badge/WACV-2026-blue.svg" alt="WACV2026"></a>
+  <a href="https://wacv.thecvf.com/"><img src="https://img.shields.io/badge/WACV-2026-blue.svg" alt="WACV2026"></a>
 </p>
 
 > Doanh C. Bui (NAIST)*, Ba Hung Ngo (CNU), Hoai Luan Pham (NAIST), Khang Nguyen (UIT), Maï K. Nguyen (ETIS), Yasuhiko Nakashima (NAIST)
