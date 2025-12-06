@@ -323,8 +323,6 @@ if __name__ == "__main__":
         num_classes = [2, 3, 2, 2, 2, 2]
         seq_dataset = Sequential_Generic_MIL_Dataset()
 
-        per_task_epoch_times = []
-
         for task_id in range(3):
             train_loader, val_loader, test_loader = seq_dataset.get_data_loaders(fold_id, task_id)
             # load model from huggingface
@@ -357,29 +355,3 @@ if __name__ == "__main__":
                 prompt_prototypes
             )
             end = time.time()
-            per_task_epoch_times.append(end - start)
-
-            # os.makedirs(f"{args.save_dir}/fold_{fold_id}", exist_ok=True)
-            # save_location = f"{args.save_dir}/fold_{fold_id}/outputs_finetuning_task_{task_id}.pkl"
-            # results = eval(test_loader, model, num_classes[task_id], device, prefix="", save_location=save_location, prompt_prototypes=prompt_prototypes)
-            
-            # save_pt_location = f"{args.save_dir}/fold_{fold_id}/ckpts_outputs_finetuning_task_{task_id}.pt"
-            # torch.save(model.state_dict(), save_pt_location)
-
-            # # compute bootstrapping results (for tasks with only one fold)
-            # bootstrap_kwargs = {"n": 1000, "alpha": 0.95}
-            # with open(f"{args.save_dir}/fold_{fold_id}/outputs_finetuning_task_{task_id}.pkl", "rb") as f:
-            #     outputs = pickle.load(f)
-            # results_mean, results_std = bootstrap(results_dict=outputs, **bootstrap_kwargs)
-
-            # print("=============================")
-            # print(f"Final finetuning results")
-            # for keys, values in results_mean.items():
-            #     print(f"{keys: <15}: {values:.4f} ± {results_std[keys]:.4f}")
-
-            # df_path = f"{args.save_dir}/fold_{fold_id}/results_fintetuning.csv"
-            # pd.DataFrame([results_mean, results_std], index=['mean', 'std']).to_csv(df_path)
-            # print(f"results saved to {df_path}")
-
-        import pdb; pdb.set_trace()
-        per_task_epoch_times
