@@ -40,8 +40,7 @@ For dataset preparation, you may need to download the WSIs from the TCGA portal 
 
 For convenience, we also provide pre-processed features that can be used directly with the scripts below *(will update later)*.
 
-- Data annotation: **TBD** (will be a google drive's link here)
-- WSI features: **TBD** (will be a google drive's link here)
+- Data annotation and WSI features: [https://drive.google.com/drive/folders/11nVmdjy2OtmmCyovBq_Dnq5CiW7MHkJ2?usp=sharing](link)
 
 ### 2.2. Data Preparation
 
