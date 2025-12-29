@@ -15,7 +15,7 @@
 
 ![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue) Clean the code.
 
-![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue) Released pre-processed TCGA WSI features.
+![update](https://img.shields.io/badge/2025--12--29-DONE-blue) Released pre-processed TCGA WSI features.
 
 ![update](https://img.shields.io/badge/2025--11--15-DONE-green) Release source code.
 
