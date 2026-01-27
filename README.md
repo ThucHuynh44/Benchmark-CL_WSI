@@ -11,9 +11,9 @@
 
 ## 📌 Status Updates
 
-![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue) Update checkpoints.
+![update](https://img.shields.io/badge/2026--xx--xx-TODO-blue) Clean the code.
 
-![update](https://img.shields.io/badge/2025--xx--xx-TODO-blue) Clean the code.
+![update](https://img.shields.io/badge/2026--01--27-DONE-green) Update checkpoints for main results (Table 2).
 
 ![update](https://img.shields.io/badge/2025--12--29-DONE-green) Released pre-processed TCGA WSI features.
 
@@ -38,7 +38,7 @@ We use a stream of six datasets TCGA-BRCA, TCGA-NSCLC, TCGA-RCC, TCGA-ESCA, TCGA
 
 For dataset preparation, you may need to download the WSIs from the TCGA portal and process them (patch extraction + feature extraction using TITAN’s vision encoder). If you are not familiar with this procedure, please refer to `20251020_WSI_processing.ipynb`.
 
-For convenience, we also provide pre-processed features that can be used directly with the scripts below *(will update later)*.
+For convenience, we also provide pre-processed features that can be used directly with the scripts below.
 
 - Data annotation and WSI features: [link](https://drive.google.com/drive/folders/11nVmdjy2OtmmCyovBq_Dnq5CiW7MHkJ2?usp=sharing)
 
@@ -139,6 +139,8 @@ python test_taskIL.py --save_dir /path/to/finetuned_checkpoints
 
 **Note 2:** For the main results, we report balanced accuracy. However, for metrics such as FGT, BWT, and Forgetting, we use standard accuracy for their calculation.
 
+To reproduce Table 2 in the MergeSlide manuscript, please use the checkpoints provided [here](https://drive.google.com/drive/folders/1Bf0-A0M8Si56GQjJR9HeJhef2YVkm3KK?usp=sharing). For other tables, please contact me at caodoanh2001 at gmail dot com.
+
 ## 4. Acknowledgement
 
 To complete this study, we were inspired by the following code bases:
@@ -152,6 +154,7 @@ Once again, we sincerely thank the authors of these projects for their tremendou
 ## 5. Citation
 If you find this work useful in your research, please consider citing:
 ```
+
 @inproceedings{
     bui2026merge,
     title={MergeSlide: Continual Model Merging and Task-to-Class Prompt-Aligned Inference for Lifelong Learning on Whole Slide Images},
