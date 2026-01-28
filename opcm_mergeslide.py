@@ -39,13 +39,9 @@ def merge_linear_weights(
     task_tv = task_W - pretrained_W
 
     u, s, v = svd(previous_merged_tv)
-    # rank = s.size(0)
-    # split_rank = (s.cumsum(dim=0) / s.sum() > alpha).float().argmax().item()
 
     projected_task_tv = u.T @ task_tv @ v
     projected_task_tv.diag().fill_(0)
-
-    # projected_task_tv[:split_rank, :split_rank] = 0
 
     cleaned_task_tv = u @ projected_task_tv @ v.T
 
