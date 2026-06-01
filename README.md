@@ -11,7 +11,30 @@
 
 ## 📌 Status Updates
 
-![update](https://img.shields.io/badge/2026--xx--xx-TODO-blue) Clean the code.
+![update](https://img.shields.io/badge/2026--06--01-DONE-green) Clean the code.
+
+## 🗂️ Project Structure
+
+```
+MergeSlide/
+├── mergeslide/              # Core package
+│   ├── datasets.py          # Dataset classes (Generic_MIL_Dataset, Sequential_Generic_MIL_Dataset, …)
+│   ├── models.py            # Shared model components (CustomSequential, EarlyStopping, cosine_lr, …)
+│   ├── prompts.py           # Class-aware prompt definitions for all 6 TCGA tasks
+│   └── utils.py             # Metrics, seeding, and model-merging utilities
+├── configs/
+│   └── dataset_paths.py     # ⚙️  Edit this file to set your dataset root paths
+├── scripts/
+│   ├── train.py             # Per-task finetuning  (replaces train_random_sampling.py)
+│   ├── merge.py             # Continual OPCM model merging  (replaces opcm_mergeslide.py)
+│   ├── eval_classil.py      # CLASS-IL evaluation: Acc/BACC/F1/AUC  (replaces test_classIL_task_prompt.py)
+│   ├── eval_classil_metrics.py  # CLASS-IL: mACC/FGT/BWT  (replaces test_classIL_task_prompt_other_metrics.py)
+│   └── eval_taskil.py       # TASK-IL evaluation  (replaces test_taskIL.py)
+├── task_prompts.pt          # Pre-computed task prompt embeddings
+└── WSI_processing.ipynb     # WSI patch + feature extraction walkthrough
+```
+
+> **Note:** The original flat scripts (`train_random_sampling.py`, `opcm_mergeslide.py`, etc.) are kept for reference but the `scripts/` versions are the maintained ones.
 
 ![update](https://img.shields.io/badge/2026--01--27-DONE-green) Update checkpoints for main results (Table 2).
 

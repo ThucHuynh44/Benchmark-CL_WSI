@@ -1,0 +1,21 @@
+# Local dataset config — contains personal paths, never commit this
+configs/datasets.yaml
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Checkpoints and logs
+checkpoints/
+logs/
+*.pth
+*.pt
+!task_prompts.pt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/

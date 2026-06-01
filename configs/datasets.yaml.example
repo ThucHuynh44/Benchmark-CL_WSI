@@ -1,0 +1,29 @@
+# MergeSlide — Dataset Paths Configuration
+#
+# SETUP:
+#   1. Copy this file:  cp configs/datasets.yaml.example configs/datasets.yaml
+#   2. Edit configs/datasets.yaml to point to your local dataset root.
+#   3. configs/datasets.yaml is git-ignored — your local paths will NOT be committed.
+
+data_root: /path/to/dataset
+
+annotations:
+  brca:  "{data_root}/wsi_dataset_annotation/tcga_brca/tcga_brca_subset.csv.zip"
+  rcc:   "{data_root}/wsi_dataset_annotation/tcga_rcc/tcga_kidney_subset.csv.zip"
+  nsclc: "{data_root}/wsi_dataset_annotation/tcga_nsclc/tcga_lung_subset.csv.zip"
+
+features:
+  brca:  "{data_root}/TCGA-BRCA_processed/features/"
+  rcc:   "{data_root}/TCGA-RCC_processed/features/"
+  nsclc: "{data_root}/TCGA-NSCLC_processed/features/"
+  esca:  "{data_root}/TCGA-ESCA_processed/features/"
+  tgct:  "{data_root}/TCGA-TGCT_processed/features/"
+  cesc:  "{data_root}/TCGA-CESC_processed/features/"
+
+split_dirs:
+  brca:  "{data_root}/wsi_dataset_annotation/tcga_brca"
+  rcc:   "{data_root}/wsi_dataset_annotation/tcga_rcc"
+  nsclc: "{data_root}/wsi_dataset_annotation/tcga_nsclc"
+  esca:  "{data_root}/wsi_dataset_annotation/tcga_esca"
+  tgct:  "{data_root}/wsi_dataset_annotation/tcga_tgct"
+  cesc:  "{data_root}/wsi_dataset_annotation/tcga_cesc"
