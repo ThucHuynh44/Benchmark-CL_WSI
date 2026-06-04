@@ -1,0 +1,40 @@
+/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:89: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  fp16_scaler = torch.cuda.amp.GradScaler()
+  0%|                                                                                                                                                                                                | 0/10 [00:00<?, ?it/s]/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:106: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast(dtype=torch.bfloat16):                                                                                                                                                | 0/80 [00:00<?, ?it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:06<00:00, 13.11it/s]
+ 10%|██████████████████▍                                                                                                                                                                     | 1/10 [00:06<00:55,  6.11s/it]/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:106: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+epoch 0, bacc: 0.9381, loss: 0.1693
+  with torch.cuda.amp.autocast(dtype=torch.bfloat16):                                                                                                                                                | 0/80 [00:00<?, ?it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:05<00:00, 14.69it/s]
+ 20%|████████████████████████████████████▊                                                                                                                                                   | 2/10 [00:11<00:45,  5.72s/it]/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:106: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+epoch 1, bacc: 0.9746, loss: 0.0337
+  with torch.cuda.amp.autocast(dtype=torch.bfloat16):                                                                                                                                                | 0/80 [00:00<?, ?it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:05<00:00, 14.79it/s]
+/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:129: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead./s]
+  with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+ 30%|███████████████████████████████████████████████████████▏                                                                                                                                | 3/10 [00:17<00:42,  6.03s/it]/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:106: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+epoch 2, bacc: 1.0000, bacc_val: 0.9444, loss: 0.0157, val_loss: 0.0984
+  with torch.cuda.amp.autocast(dtype=torch.bfloat16):                                                                                                                                                | 0/80 [00:00<?, ?it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:05<00:00, 13.92it/s]
+/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:129: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead./s]
+  with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+ 40%|█████████████████████████████████████████████████████████████████████████▌                                                                                                              | 4/10 [00:24<00:37,  6.33s/it]/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:106: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+epoch 3, bacc: 1.0000, bacc_val: 0.9444, loss: 0.0013, val_loss: 0.0963
+  with torch.cuda.amp.autocast(dtype=torch.bfloat16):                                                                                                                                                | 0/80 [00:00<?, ?it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:06<00:00, 13.22it/s]
+/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:129: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead./s]
+  with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+ 50%|████████████████████████████████████████████████████████████████████████████████████████████                                                                                            | 5/10 [00:31<00:33,  6.63s/it]/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:106: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+epoch 4, bacc: 1.0000, bacc_val: 0.9444, loss: 0.0009, val_loss: 0.0967
+EarlyStopping counter: 1 out of 2
+  with torch.cuda.amp.autocast(dtype=torch.bfloat16):                                                                                                                                                | 0/80 [00:00<?, ?it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:05<00:00, 14.04it/s]
+/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py:129: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead./s]
+  with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+ 50%|████████████████████████████████████████████████████████████████████████████████████████████                                                                                            | 5/10 [00:38<00:38,  7.72s/it]
+epoch 5, bacc: 1.0000, bacc_val: 0.9444, loss: 0.0008, val_loss: 0.0963
+EarlyStopping counter: 2 out of 2
+Early stopping
+Fold 0, Task 3: training took 38.6s
+Saved checkpoint: ./checkpoints/finetuned/fold_0/ckpts_outputs_finetuning_task_3.pt

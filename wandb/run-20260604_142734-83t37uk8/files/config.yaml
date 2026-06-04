@@ -1,0 +1,111 @@
+_wandb:
+    value:
+        cli_version: 0.27.1
+        e:
+            doyfzdswb2786h6qg9tufwobifxyldmc:
+                codePath: scripts/train.py
+                codePathLocal: scripts/train.py
+                cpu_count: 20
+                cpu_count_logical: 40
+                cudaVersion: "12.2"
+                disk:
+                    /:
+                        total: "1887725785088"
+                        used: "1552764088320"
+                email: 23521555@gm.uit.edu.vn
+                executable: /mmlab_students/storageStudents/nguyenvd/anaconda3/envs/merge_thuc/bin/python
+                git:
+                    commit: dc98398ad100ef526717210540218aa790c2d06b
+                    remote: https://github.com/ThucHuynh44/Benchmark-CL_WSI.git
+                gpu: NVIDIA GeForce RTX 2080 Ti
+                gpu_count: 8
+                gpu_nvidia:
+                    - architecture: Turing
+                      cudaCores: 4352
+                      memoryTotal: "11811160064"
+                      name: NVIDIA GeForce RTX 2080 Ti
+                      uuid: GPU-b39aec28-ad56-25b6-eb11-17f6e0e2bd1a
+                    - architecture: Turing
+                      cudaCores: 4352
+                      memoryTotal: "11811160064"
+                      name: NVIDIA GeForce RTX 2080 Ti
+                      uuid: GPU-1320dbeb-ff6b-2efa-4992-600db38a0a1c
+                    - architecture: Turing
+                      cudaCores: 4352
+                      memoryTotal: "11811160064"
+                      name: NVIDIA GeForce RTX 2080 Ti
+                      uuid: GPU-369080f0-0b80-d463-a36d-282a22870191
+                    - architecture: Turing
+                      cudaCores: 4352
+                      memoryTotal: "11811160064"
+                      name: NVIDIA GeForce RTX 2080 Ti
+                      uuid: GPU-ea544087-c814-9340-1c76-9f5c5205e72b
+                    - architecture: Turing
+                      cudaCores: 4352
+                      memoryTotal: "11811160064"
+                      name: NVIDIA GeForce RTX 2080 Ti
+                      uuid: GPU-8c875283-af33-7e86-a76f-83a9735f5f2b
+                    - architecture: Turing
+                      cudaCores: 4352
+                      memoryTotal: "11811160064"
+                      name: NVIDIA GeForce RTX 2080 Ti
+                      uuid: GPU-73218ca5-7b59-d19b-4859-60044aee5ae4
+                    - architecture: Turing
+                      cudaCores: 4352
+                      memoryTotal: "11811160064"
+                      name: NVIDIA GeForce RTX 2080 Ti
+                      uuid: GPU-99945e4c-280a-2590-c470-320bcc07ba77
+                    - architecture: Turing
+                      cudaCores: 4352
+                      memoryTotal: "11811160064"
+                      name: NVIDIA GeForce RTX 2080 Ti
+                      uuid: GPU-e4e76ad6-f8cd-1304-3f91-9695b747f8dd
+                host: gpu154-4029GPTRT2
+                memory:
+                    total: "270086737920"
+                os: Linux-5.15.0-126-generic-x86_64-with-glibc2.31
+                program: /mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/scripts/train.py
+                python: CPython 3.10.20
+                root: /mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide
+                startedAt: "2026-06-04T07:27:34.844178Z"
+                writerId: doyfzdswb2786h6qg9tufwobifxyldmc
+        m: []
+        python_version: 3.10.20
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 53
+                - 63
+            "2":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 53
+                - 63
+            "3":
+                - 2
+                - 13
+                - 16
+            "4": 3.10.20
+            "5": 0.27.1
+            "6": 4.56.2
+            "10":
+                - 20
+            "12": 0.27.1
+            "13": linux-x86_64
+fold:
+    value: 4
+lr:
+    value: 1e-05
+num_epochs:
+    value: 10
+task:
+    value: 0
+weight_decay:
+    value: 0.0001

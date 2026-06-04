@@ -27,11 +27,12 @@ def _resolve(value: str, data_root: str) -> str:
     return value.replace("{data_root}", data_root)
 
 
-def load_config(path: str = None) -> dict:
+def load_config(path: str = None, default_filename: str = "train.yaml") -> dict:
     """Load and resolve the YAML dataset config.
 
     Args:
         path: Optional explicit path to a YAML config file.
+        default_filename: Default config filename inside configs/ directory.
 
     Returns:
         dict with keys: brca_csv, rcc_csv, nsclc_csv,
@@ -39,32 +40,64 @@ def load_config(path: str = None) -> dict:
                         esca_features, tgct_features, cesc_features,
                         split_dirs (list of 6 paths in task order)
     """
-    # Determine config file to use
+    # 1. Load shared dataset paths from datasets.yaml
+    shared_path = _REPO_ROOT / "configs" / "datasets.yaml"
+    if not shared_path.exists():
+        shared_path = _REPO_ROOT / "configs" / "datasets.yaml.example"
+
+    with open(shared_path, "r") as f:
+        shared_raw = yaml.safe_load(f) or {}
+
+    # 2. Determine and load stage-specific config file to use
     if path:
         cfg_path = Path(path)
     elif "MERGESLIDE_CONFIG" in os.environ:
         cfg_path = Path(os.environ["MERGESLIDE_CONFIG"])
-    elif _DEFAULT_CONFIG.exists():
-        cfg_path = _DEFAULT_CONFIG
     else:
-        warnings.warn(
-            f"configs/datasets.yaml not found. "
-            f"Using example config with placeholder paths.\n"
-            f"Run:  cp configs/datasets.yaml.example configs/datasets.yaml\n"
-            f"Then edit configs/datasets.yaml with your local dataset root.",
-            stacklevel=3,
-        )
-        cfg_path = _EXAMPLE_CONFIG
+        candidate = _REPO_ROOT / "configs" / default_filename
+        if candidate.exists():
+            cfg_path = candidate
+        else:
+            cfg_path = None
 
-    with open(cfg_path, "r") as f:
-        raw = yaml.safe_load(f)
+    stage_raw = {}
+    if cfg_path and cfg_path.exists():
+        with open(cfg_path, "r") as f:
+            stage_raw = yaml.safe_load(f) or {}
+
+    # Merge them (stage_raw overrides shared_raw if overlap)
+    raw = {**shared_raw, **stage_raw}
+
+    # Ensure required keys exist
+    if "data_root" not in raw:
+        raw["data_root"] = "/path/to/dataset"
+    if "annotations" not in raw:
+        raw["annotations"] = {"brca": "", "rcc": "", "nsclc": ""}
+    if "features" not in raw:
+        raw["features"] = {"brca": "", "rcc": "", "nsclc": "", "esca": "", "tgct": "", "cesc": ""}
+    if "split_dirs" not in raw:
+        raw["split_dirs"] = {"brca": "", "rcc": "", "nsclc": "", "esca": "", "tgct": "", "cesc": ""}
 
     data_root: str = raw["data_root"]
+    hf_token = raw.get("hf_token") or os.environ.get("HF_TOKEN")
+
+    if hf_token and hf_token != "YOUR_HF_TOKEN":
+        try:
+            from huggingface_hub import login
+            login(token=hf_token, write_permission=False)
+        except Exception as e:
+            warnings.warn(f"Failed to log in to Hugging Face Hub using token: {e}")
 
     def r(v: str) -> str:
         return _resolve(v, data_root)
 
     return {
+        # Settings
+        "training": raw.get("training", {}),
+        "merging": raw.get("merging", {}),
+        "evaluation": raw.get("evaluation", {}),
+        # Hugging Face token
+        "hf_token": hf_token,
         # Annotation CSV/ZIP paths
         "brca_csv":  r(raw["annotations"]["brca"]),
         "rcc_csv":   r(raw["annotations"]["rcc"]),

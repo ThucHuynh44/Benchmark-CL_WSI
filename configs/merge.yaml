@@ -1,0 +1,11 @@
+# MergeSlide — Model Merging & Evaluation Stage Configuration
+merging:
+  num_tasks: 6
+  src_finetuned_checkpoints: "./checkpoints/finetuned"
+  des_merged_checkpoints: "./checkpoints/merged"
+  use_wandb: true
+  wandb_project: "MergeSlide-Merging"
+
+evaluation:
+  save_dir: "./checkpoints/finetuned"
+  merge_model_path: "./checkpoints/merged"

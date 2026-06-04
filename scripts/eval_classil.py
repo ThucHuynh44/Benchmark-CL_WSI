@@ -10,6 +10,10 @@ Usage:
         --merge_model_path /path/to/merged/checkpoints/
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import argparse
 import time
 
@@ -26,6 +30,7 @@ from sklearn.metrics import (
 from tqdm import tqdm
 from transformers import AutoModel
 
+from configs.loader import load_config
 from mergeslide.datasets import Sequential_Generic_MIL_Dataset
 from mergeslide.models import CustomSequential, pad_numpy_arrays
 from mergeslide.prompts import ALL_TASK_PROMPTS, TEMPLATES
@@ -158,11 +163,17 @@ if __name__ == "__main__":
     seed_torch(device, 0)
 
     parser = argparse.ArgumentParser(description="CLASS-IL evaluation with task-to-class prompt alignment")
-    parser.add_argument("--save_dir", type=str, default="./checkpoints/finetuned",
+    parser.add_argument("--save_dir", type=str, default=None,
                         help="Directory with per-task finetuned checkpoints")
-    parser.add_argument("--merge_model_path", type=str, default="./checkpoints/merged",
+    parser.add_argument("--merge_model_path", type=str, default=None,
                         help="Directory with merged model checkpoints")
     args = parser.parse_args()
+
+    cfg = load_config(default_filename="merge.yaml")
+    eval_cfg = cfg.get("evaluation", {})
+
+    save_dir = args.save_dir if args.save_dir is not None else eval_cfg.get("save_dir", "./checkpoints/finetuned")
+    merge_model_path = args.merge_model_path if args.merge_model_path is not None else eval_cfg.get("merge_model_path", "./checkpoints/merged")
 
     num_tasks = 6
     num_classes = [2, 3, 2, 2, 2, 2]
@@ -182,7 +193,7 @@ if __name__ == "__main__":
     for fold_id in tqdm(range(10)):
         fold = f"fold_{fold_id}"
         task_model_paths = [
-            f"{args.save_dir}/{fold_id}/ckpts_outputs_finetuning_task_{task_id}.pt"
+            f"{save_dir}/{fold_id}/ckpts_outputs_finetuning_task_{task_id}.pt"
             for task_id in range(num_tasks)
         ]
 
@@ -196,7 +207,7 @@ if __name__ == "__main__":
         # Build model: merged backbone + identity head (task routing is done inside eval)
         model = CustomSequential(titan_model, nn.Identity())
         # Load the final merged backbone for this fold
-        merged_ckpt = f"{args.merge_model_path}/fold_{fold_id}/merged_weight_opcm_random_sampling_{fold}_task_{num_tasks - 1}.pth"
+        merged_ckpt = f"{merge_model_path}/fold_{fold_id}/merged_weight_opcm_random_sampling_{fold}_task_{num_tasks - 1}.pth"
         model.backbone.load_state_dict(torch.load(merged_ckpt))
         model.eval()
 

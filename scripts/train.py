@@ -6,10 +6,14 @@ Usage:
     python scripts/train.py --save_dir /path/to/finetuned/checkpoints
 """
 
-import argparse
+import sys
 import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import argparse
 import pickle
 import time
+import warnings
 
 import numpy as np
 import torch
@@ -18,6 +22,7 @@ from sklearn.metrics import balanced_accuracy_score
 from tqdm import tqdm
 from transformers import AutoModel
 
+from configs.loader import load_config
 from mergeslide.datasets import Sequential_Generic_MIL_Dataset
 from mergeslide.models import CustomSequential, EarlyStopping, cosine_lr, create_mlp
 from mergeslide.prompts import ALL_TASK_PROMPTS, TEMPLATES
@@ -48,7 +53,7 @@ def build_classifier(titan_model, device: str):
     return classifier
 
 
-def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device, **kwargs):
+def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device, use_wandb=False, **kwargs):
     """Train model for one epoch with cosine LR and early stopping.
 
     Args:
@@ -59,6 +64,7 @@ def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device,
         lr: Base learning rate.
         weight_decay: Weight decay for AdamW.
         device: Target device string.
+        use_wandb: Set to True to enable wandb tracking.
 
     Returns:
         Trained model.
@@ -108,6 +114,9 @@ def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device,
 
             preds_all.append(logits.argmax(1).cpu().numpy())
             targets_all.append(label.numpy())
+            if use_wandb and step % 10 == 0:
+                import wandb
+                wandb.log({"train/step_loss": loss.item(), "lr": optimizer.param_groups[0]['lr'], "step": step})
             step += 1
             total_train_loss += loss.item()
 
@@ -136,12 +145,28 @@ def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device,
             avg_val_loss = total_val_loss / len(val_loader)
             bacc_val = balanced_accuracy_score(np.concatenate(targets_val), np.concatenate(preds_val))
             tqdm.write(f"epoch {epoch}, bacc: {bacc:.4f}, bacc_val: {bacc_val:.4f}, loss: {avg_train_loss:.4f}, val_loss: {avg_val_loss:.4f}")
+            if use_wandb:
+                import wandb
+                wandb.log({
+                    "epoch": epoch,
+                    "train/loss": avg_train_loss,
+                    "train/bacc": bacc,
+                    "val/loss": avg_val_loss,
+                    "val/bacc": bacc_val,
+                })
             early_stopping(avg_val_loss, model)
             if early_stopping.early_stop:
                 print("Early stopping")
                 break
         else:
             tqdm.write(f"epoch {epoch}, bacc: {bacc:.4f}, loss: {avg_train_loss:.4f}")
+            if use_wandb:
+                import wandb
+                wandb.log({
+                    "epoch": epoch,
+                    "train/loss": avg_train_loss,
+                    "train/bacc": bacc,
+                })
 
     model.eval()
     return model
@@ -204,12 +229,29 @@ if __name__ == "__main__":
     seed_torch(device, 0)
 
     parser = argparse.ArgumentParser(description="Per-task finetuning of TITAN on TCGA WSI tasks")
-    parser.add_argument("--num_epochs", type=int, default=10)
-    parser.add_argument("--lr", type=float, default=1e-5)
-    parser.add_argument("--weight_decay", type=float, default=1e-4)
-    parser.add_argument("--save_dir", type=str, default="./checkpoints/finetuned",
+    parser.add_argument("--num_epochs", type=int, default=None)
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--weight_decay", type=float, default=None)
+    parser.add_argument("--save_dir", type=str, default=None,
                         help="Directory to save per-task finetuned checkpoints")
+    parser.add_argument("--use_wandb", action="store_true", help="Enable weights and biases tracking")
     args = parser.parse_args()
+
+    cfg = load_config(default_filename="train.yaml")
+    train_cfg = cfg.get("training", {})
+
+    num_epochs = int(args.num_epochs if args.num_epochs is not None else train_cfg.get("num_epochs", 10))
+    lr = float(args.lr if args.lr is not None else train_cfg.get("lr", 1e-5))
+    weight_decay = float(args.weight_decay if args.weight_decay is not None else train_cfg.get("weight_decay", 1e-4))
+    save_dir = args.save_dir if args.save_dir is not None else train_cfg.get("save_dir", "./checkpoints/finetuned")
+    use_wandb = args.use_wandb or train_cfg.get("use_wandb", False)
+
+    if use_wandb:
+        try:
+            import wandb
+        except ImportError:
+            warnings.warn("wandb package not found. Disabling wandb tracking.")
+            use_wandb = False
 
     device_str = str(device)
     num_tasks = 6
@@ -222,11 +264,26 @@ if __name__ == "__main__":
     classifier = build_classifier(titan_model, device_str)
 
     for fold_id in range(10):
-        fold_dir = os.path.join(args.save_dir, f"fold_{fold_id}")
+        fold_dir = os.path.join(save_dir, f"fold_{fold_id}")
         os.makedirs(fold_dir, exist_ok=True)
 
         for task_id in range(num_tasks):
             train_loader, val_loader, test_loader = seq_dataset.get_data_loaders(fold_id, task_id)
+
+            if use_wandb:
+                import wandb
+                wandb.init(
+                    project=train_cfg.get("wandb_project", "MergeSlide-Finetuning"),
+                    name=f"fold_{fold_id}_task_{task_id}",
+                    config={
+                        "fold": fold_id,
+                        "task": task_id,
+                        "num_epochs": num_epochs,
+                        "lr": lr,
+                        "weight_decay": weight_decay,
+                    },
+                    reinit=True
+                )
 
             model = AutoModel.from_pretrained("MahmoodLab/TITAN", trust_remote_code=True).to(device_str)
             mlp = nn.Linear(768, num_classes[task_id]).to(device_str)
@@ -243,10 +300,14 @@ if __name__ == "__main__":
                 param.requires_grad = False
 
             start = time.time()
-            model = train(train_loader, val_loader, model, args.num_epochs, args.lr, args.weight_decay, device_str)
+            model = train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device_str, use_wandb=use_wandb)
             elapsed = time.time() - start
             print(f"Fold {fold_id}, Task {task_id}: training took {elapsed:.1f}s")
 
             ckpt_path = os.path.join(fold_dir, f"ckpts_outputs_finetuning_task_{task_id}.pt")
             torch.save(model.state_dict(), ckpt_path)
             print(f"Saved checkpoint: {ckpt_path}")
+
+            if use_wandb:
+                import wandb
+                wandb.finish()

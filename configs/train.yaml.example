@@ -1,0 +1,8 @@
+# MergeSlide — Per-task Finetuning Stage Configuration Template
+training:
+  num_epochs: 10
+  lr: 1e-5
+  weight_decay: 1e-4
+  save_dir: "./checkpoints/finetuned"
+  use_wandb: false
+  wandb_project: "MergeSlide-Finetuning"

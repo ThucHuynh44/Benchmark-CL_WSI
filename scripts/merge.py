@@ -9,8 +9,13 @@ Usage:
         --des_merged_checkpoints /path/to/merged/checkpoints/
 """
 
-import argparse
+import sys
 import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import argparse
+import warnings
+from configs.loader import load_config
 
 import numpy as np
 import torch
@@ -121,14 +126,28 @@ def _filter_backbone_weights(raw_state_dict: dict) -> dict:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Continual OPCM model merging")
-    parser.add_argument("--num_tasks", type=int, default=6)
-    parser.add_argument("--src_finetuned_checkpoints", type=str,
-                        default="./checkpoints/finetuned",
+    parser.add_argument("--num_tasks", type=int, default=None)
+    parser.add_argument("--src_finetuned_checkpoints", type=str, default=None,
                         help="Directory containing per-task finetuned checkpoints")
-    parser.add_argument("--des_merged_checkpoints", type=str,
-                        default="./checkpoints/merged",
+    parser.add_argument("--des_merged_checkpoints", type=str, default=None,
                         help="Output directory for merged checkpoints")
+    parser.add_argument("--use_wandb", action="store_true", help="Enable weights and biases tracking")
     args = parser.parse_args()
+
+    cfg = load_config(default_filename="merge.yaml")
+    merge_cfg = cfg.get("merging", {})
+
+    num_tasks = int(args.num_tasks if args.num_tasks is not None else merge_cfg.get("num_tasks", 6))
+    src_finetuned_checkpoints = args.src_finetuned_checkpoints if args.src_finetuned_checkpoints is not None else merge_cfg.get("src_finetuned_checkpoints", "./checkpoints/finetuned")
+    des_merged_checkpoints = args.des_merged_checkpoints if args.des_merged_checkpoints is not None else merge_cfg.get("des_merged_checkpoints", "./checkpoints/merged")
+    use_wandb = args.use_wandb or merge_cfg.get("use_wandb", False)
+
+    if use_wandb:
+        try:
+            import wandb
+        except ImportError:
+            warnings.warn("wandb package not found. Disabling wandb tracking.")
+            use_wandb = False
 
     base_model = AutoModel.from_pretrained("MahmoodLab/TITAN", trust_remote_code=True)
     base_weight = {k: v.detach() for k, v in base_model.vision_encoder.state_dict().items()}
@@ -136,10 +155,22 @@ if __name__ == "__main__":
     for fold_id in range(10):
         fold_name = f"fold_{fold_id}"
         task_model_paths = [
-            os.path.join(args.src_finetuned_checkpoints, fold_name,
+            os.path.join(src_finetuned_checkpoints, fold_name,
                          f"ckpts_outputs_finetuning_task_{task_id}.pt")
-            for task_id in range(args.num_tasks)
+            for task_id in range(num_tasks)
         ]
+
+        if use_wandb:
+            import wandb
+            wandb.init(
+                project=merge_cfg.get("wandb_project", "MergeSlide-Merging"),
+                name=f"merge_fold_{fold_id}",
+                config={
+                    "fold": fold_id,
+                    "num_tasks": num_tasks,
+                },
+                reinit=True
+            )
 
         # Pre-compute task vectors for λ normalization
         all_task_vector_norms = []
@@ -154,7 +185,7 @@ if __name__ == "__main__":
         previous_lambda_t = 1.0
         avg_task_vector_norm = all_task_vector_norms[0]
 
-        output_dir = os.path.join(args.des_merged_checkpoints, f"_{fold_name}")
+        output_dir = os.path.join(des_merged_checkpoints, f"_{fold_name}")
         os.makedirs(output_dir, exist_ok=True)
 
         # Save the task-0-only checkpoint (index 0)
@@ -169,7 +200,7 @@ if __name__ == "__main__":
 
             for module_name, module in tqdm(
                 list(base_model.vision_encoder.named_modules()),
-                desc=f"Merging task {model_idx + 1}/{args.num_tasks}",
+                desc=f"Merging task {model_idx + 1}/{num_tasks}",
                 leave=False,
             ):
                 if not is_leaf_module(module):
@@ -215,11 +246,24 @@ if __name__ == "__main__":
                 task_vector = merged_weight[param_name] - base_p
                 merged_weight[param_name] = base_p + task_vector * (avg_task_vector_norm / task_vector_norm)
 
+            if use_wandb:
+                import wandb
+                wandb.log({
+                    "task_id": model_idx,
+                    "lambda_t": lambda_t,
+                    "task_vector_norm": task_vector_norm,
+                    "avg_task_vector_norm": avg_task_vector_norm
+                })
+
             ckpt_name = f"merged_weight_opcm_random_sampling_{fold_name}_task_{model_idx}.pth"
             torch.save(merged_weight, os.path.join(output_dir, ckpt_name))
             print(f"Saved: {os.path.join(output_dir, ckpt_name)}")
 
         # Also save the final merged checkpoint at the top-level output directory
-        final_path = os.path.join(args.des_merged_checkpoints, f"merged_weight_opcm_random_sampling_{fold_name}.pth")
+        final_path = os.path.join(des_merged_checkpoints, f"merged_weight_opcm_random_sampling_{fold_name}.pth")
         torch.save(merged_weight, final_path)
         print(f"Final checkpoint: {final_path}")
+
+        if use_wandb:
+            import wandb
+            wandb.finish()

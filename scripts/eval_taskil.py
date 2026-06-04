@@ -8,6 +8,10 @@ Usage:
         --merge_model_path /path/to/merged/checkpoints/fold_0.pth
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import argparse
 
 import numpy as np
@@ -17,6 +21,7 @@ from sklearn.metrics import balanced_accuracy_score
 from tqdm import tqdm
 from transformers import AutoModel
 
+from configs.loader import load_config
 from mergeslide.datasets import Sequential_Generic_MIL_Dataset
 from mergeslide.models import CustomSequential
 from mergeslide.utils import get_eval_metrics, seed_torch
@@ -80,25 +85,35 @@ if __name__ == "__main__":
     seed_torch(device, 0)
 
     parser = argparse.ArgumentParser(description="TASK-IL evaluation with oracle task identity")
-    parser.add_argument("--save_dir", type=str, default="./checkpoints/finetuned",
+    parser.add_argument("--save_dir", type=str, default=None,
                         help="Directory with per-task finetuned checkpoints")
-    parser.add_argument("--merge_model_path", type=str, required=True,
+    parser.add_argument("--merge_model_path", type=str, default=None,
                         help="Path to the merged backbone checkpoint (.pth file)")
     args = parser.parse_args()
+
+    cfg = load_config(default_filename="merge.yaml")
+    eval_cfg = cfg.get("evaluation", {})
+
+    save_dir = args.save_dir if args.save_dir is not None else eval_cfg.get("save_dir", "./checkpoints/finetuned")
+    merge_model_path = args.merge_model_path if args.merge_model_path is not None else eval_cfg.get("merge_model_path", "./checkpoints/merged")
+
+    # If it is a directory, resolve to the default fold 0 file
+    if merge_model_path and os.path.isdir(merge_model_path):
+        merge_model_path = os.path.join(merge_model_path, "merged_weight_opcm_random_sampling_fold_0.pth")
 
     num_tasks = 6
     num_classes = [2, 3, 2, 2, 2, 2]
     seq_dataset = Sequential_Generic_MIL_Dataset()
 
     base_model = AutoModel.from_pretrained("MahmoodLab/TITAN", trust_remote_code=True).to(device)
-    base_model.vision_encoder.load_state_dict(torch.load(args.merge_model_path))
+    base_model.vision_encoder.load_state_dict(torch.load(merge_model_path))
 
     overall_accs, all_acc_per_task = [], []
 
     for fold_id in tqdm(range(1)):  # Note: currently evaluates fold 0 only
         fold = f"fold_{fold_id}"
         task_models = [
-            f"{args.save_dir}/{fold}/ckpts_outputs_finetuning_task_{task_id}.pt"
+            f"{save_dir}/{fold}/ckpts_outputs_finetuning_task_{task_id}.pt"
             for task_id in range(num_tasks)
         ]
 
