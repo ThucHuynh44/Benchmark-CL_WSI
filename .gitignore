@@ -19,3 +19,5 @@ logs/
 # IDE
 .vscode/
 .idea/
+
+wandb/
