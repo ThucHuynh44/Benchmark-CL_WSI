@@ -542,7 +542,7 @@ class Sequential_Generic_MIL_Dataset(ContinualDataset):
                          Defaults to configs/datasets.yaml (or MERGESLIDE_CONFIG env var).
         """
         super().__init__()
-        cfg = load_config(config_path)
+        cfg = load_config(config_path, default_filename="train.yaml")
         self.datasets = [
             Generic_MIL_Dataset(
                 csv_path=cfg['brca_csv'], data_dir=cfg['brca_features'],

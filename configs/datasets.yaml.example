@@ -6,6 +6,7 @@
 #   3. configs/datasets.yaml is git-ignored — your local paths will NOT be committed.
 
 data_root: /path/to/dataset
+hf_token: "YOUR_HF_TOKEN"
 
 annotations:
   brca:  "{data_root}/wsi_dataset_annotation/tcga_brca/tcga_brca_subset.csv.zip"

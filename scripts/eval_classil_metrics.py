@@ -11,6 +11,10 @@ Usage:
         --merge_model_path /path/to/merged/checkpoints/
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import argparse
 
 import numpy as np
@@ -19,6 +23,7 @@ import torch.nn as nn
 from tqdm import tqdm
 from transformers import AutoModel
 
+from configs.loader import load_config
 from mergeslide.datasets import Sequential_Generic_MIL_Dataset
 from mergeslide.models import CustomSequential, pad_numpy_arrays
 from mergeslide.utils import get_eval_metrics, seed_torch
@@ -121,11 +126,17 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     parser = argparse.ArgumentParser(description="CLASS-IL: mACC, FGT, BWT metrics")
-    parser.add_argument("--save_dir", type=str, default="./checkpoints/finetuned",
+    parser.add_argument("--save_dir", type=str, default=None,
                         help="Directory with per-task finetuned checkpoints")
-    parser.add_argument("--merge_model_path", type=str, default="./checkpoints/merged",
+    parser.add_argument("--merge_model_path", type=str, default=None,
                         help="Directory with merged model checkpoints")
     args = parser.parse_args()
+
+    cfg = load_config(default_filename="merge.yaml")
+    eval_cfg = cfg.get("evaluation", {})
+
+    save_dir = args.save_dir if args.save_dir is not None else eval_cfg.get("save_dir", "./checkpoints/finetuned")
+    merge_model_path = args.merge_model_path if args.merge_model_path is not None else eval_cfg.get("merge_model_path", "./checkpoints/merged")
 
     num_tasks = 6
     num_classes = [2, 3, 2, 2, 2, 2]
@@ -139,7 +150,7 @@ if __name__ == "__main__":
     for fold_id in tqdm(range(10)):
         fold = f"fold_{fold_id}"
         task_model_paths = [
-            f"{args.save_dir}/{fold_id}/ckpts_outputs_finetuning_task_{task_id}.pt"
+            f"{save_dir}/{fold_id}/ckpts_outputs_finetuning_task_{task_id}.pt"
             for task_id in range(num_tasks)
         ]
 
@@ -151,14 +162,14 @@ if __name__ == "__main__":
             acc_per_task = [0.0] * seq_task
 
             # Load the merged checkpoint after `seq_task` tasks
-            merge_model_path = (
-                f"{args.merge_model_path}_{{fold}}"
+            resolved_merge_model_path = (
+                f"{merge_model_path}_{{fold}}"
                 f"/merged_weight_opcm_random_sampling_{fold}_task_{seq_task - 1}.pth"
             ).format(fold=fold)
 
             base_model = AutoModel.from_pretrained("MahmoodLab/TITAN", trust_remote_code=True)
             base_model = base_model.to(device)
-            base_model.vision_encoder.load_state_dict(torch.load(merge_model_path))
+            base_model.vision_encoder.load_state_dict(torch.load(resolved_merge_model_path))
             model = CustomSequential(base_model, nn.Identity())
             model.eval()
 
