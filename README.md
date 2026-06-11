@@ -23,7 +23,10 @@ MergeSlide/
 │   ├── prompts.py           # Class-aware prompt definitions for all 6 TCGA tasks
 │   └── utils.py             # Metrics, seeding, and model-merging utilities
 ├── configs/
-│   └── dataset_paths.py     # ⚙️  Edit this file to set your dataset root paths
+│   ├── datasets.yaml        # Dataset roots, annotations, feature paths, split dirs
+│   ├── train.yaml           # Per-task finetuning config
+│   ├── merge.yaml           # OPCM model-merging config
+│   └── eval.yaml            # CLASS-IL/TASK-IL evaluation config
 ├── scripts/
 │   ├── train.py             # Per-task finetuning  (replaces train_random_sampling.py)
 │   ├── merge.py             # Continual OPCM model merging  (replaces opcm_mergeslide.py)

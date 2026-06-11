@@ -12,8 +12,6 @@ Priority:
 import os
 import warnings
 from pathlib import Path
-from typing import Dict, List
-
 import yaml
 
 # Repository root = two levels up from this file (configs/loader.py)
@@ -22,9 +20,25 @@ _DEFAULT_CONFIG = _REPO_ROOT / "configs" / "datasets.yaml"
 _EXAMPLE_CONFIG = _REPO_ROOT / "configs" / "datasets.yaml.example"
 
 
+DEFAULT_TASK_ORDER = [
+    "camelyon17",
+    "brca",
+    "rcc",
+    "nsclc",
+    "esca",
+    "tgct",
+    "cesc",
+    "bracs",
+    "herohe",
+    "ubc_ocean",
+]
+
+
 def _resolve(value: str, data_root: str) -> str:
     """Replace '{data_root}' placeholder with the actual data_root value."""
-    return value.replace("{data_root}", data_root)
+    if value is None:
+        return ""
+    return str(value).replace("{data_root}", data_root)
 
 
 def load_config(path: str = None, default_filename: str = "train.yaml") -> dict:
@@ -35,10 +49,7 @@ def load_config(path: str = None, default_filename: str = "train.yaml") -> dict:
         default_filename: Default config filename inside configs/ directory.
 
     Returns:
-        dict with keys: brca_csv, rcc_csv, nsclc_csv,
-                        brca_features, rcc_features, nsclc_features,
-                        esca_features, tgct_features, cesc_features,
-                        split_dirs (list of 6 paths in task order)
+        dict with resolved paths and task_order.
     """
     # 1. Load shared dataset paths from datasets.yaml
     shared_path = _REPO_ROOT / "configs" / "datasets.yaml"
@@ -72,11 +83,13 @@ def load_config(path: str = None, default_filename: str = "train.yaml") -> dict:
     if "data_root" not in raw:
         raw["data_root"] = "/path/to/dataset"
     if "annotations" not in raw:
-        raw["annotations"] = {"brca": "", "rcc": "", "nsclc": ""}
+        raw["annotations"] = {}
     if "features" not in raw:
-        raw["features"] = {"brca": "", "rcc": "", "nsclc": "", "esca": "", "tgct": "", "cesc": ""}
+        raw["features"] = {}
     if "split_dirs" not in raw:
-        raw["split_dirs"] = {"brca": "", "rcc": "", "nsclc": "", "esca": "", "tgct": "", "cesc": ""}
+        raw["split_dirs"] = {}
+    if "task_order" not in raw:
+        raw["task_order"] = DEFAULT_TASK_ORDER
 
     data_root: str = raw["data_root"]
     hf_token = raw.get("hf_token") or os.environ.get("HF_TOKEN")
@@ -91,6 +104,12 @@ def load_config(path: str = None, default_filename: str = "train.yaml") -> dict:
     def r(v: str) -> str:
         return _resolve(v, data_root)
 
+    annotations = {k: r(v) for k, v in raw.get("annotations", {}).items()}
+    features = {k: r(v) for k, v in raw.get("features", {}).items()}
+    split_dirs_by_name = {k: r(v) for k, v in raw.get("split_dirs", {}).items()}
+    task_order = list(raw.get("task_order", DEFAULT_TASK_ORDER))
+    split_dirs = [split_dirs_by_name.get(task_name, "") for task_name in task_order]
+
     return {
         # Settings
         "training": raw.get("training", {}),
@@ -98,24 +117,22 @@ def load_config(path: str = None, default_filename: str = "train.yaml") -> dict:
         "evaluation": raw.get("evaluation", {}),
         # Hugging Face token
         "hf_token": hf_token,
+        # Task metadata
+        "task_order": task_order,
+        "annotations": annotations,
+        "features": features,
+        "split_dirs_by_name": split_dirs_by_name,
         # Annotation CSV/ZIP paths
-        "brca_csv":  r(raw["annotations"]["brca"]),
-        "rcc_csv":   r(raw["annotations"]["rcc"]),
-        "nsclc_csv": r(raw["annotations"]["nsclc"]),
+        "brca_csv":  annotations.get("brca", ""),
+        "rcc_csv":   annotations.get("rcc", ""),
+        "nsclc_csv": annotations.get("nsclc", ""),
         # Feature directories
-        "brca_features":  r(raw["features"]["brca"]),
-        "rcc_features":   r(raw["features"]["rcc"]),
-        "nsclc_features": r(raw["features"]["nsclc"]),
-        "esca_features":  r(raw["features"]["esca"]),
-        "tgct_features":  r(raw["features"]["tgct"]),
-        "cesc_features":  r(raw["features"]["cesc"]),
-        # Split directories (ordered: BRCA, RCC, NSCLC, ESCA, TGCT, CESC)
-        "split_dirs": [
-            r(raw["split_dirs"]["brca"]),
-            r(raw["split_dirs"]["rcc"]),
-            r(raw["split_dirs"]["nsclc"]),
-            r(raw["split_dirs"]["esca"]),
-            r(raw["split_dirs"]["tgct"]),
-            r(raw["split_dirs"]["cesc"]),
-        ],
+        "brca_features":  features.get("brca", ""),
+        "rcc_features":   features.get("rcc", ""),
+        "nsclc_features": features.get("nsclc", ""),
+        "esca_features":  features.get("esca", ""),
+        "tgct_features":  features.get("tgct", ""),
+        "cesc_features":  features.get("cesc", ""),
+        # Split directories in task_order.
+        "split_dirs": split_dirs,
     }

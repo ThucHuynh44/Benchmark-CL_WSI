@@ -11,9 +11,12 @@ import bisect
 import collections
 import math
 import os
+import time
 from abc import abstractmethod
 from itertools import islice
 from typing import List, Tuple
+
+os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 
 import h5py
 import numpy as np
@@ -149,6 +152,129 @@ def collate_MIL(batch):
     return [img, coord, label]
 
 
+DEFAULT_TASK_ORDER = [
+    "camelyon17",
+    "brca",
+    "rcc",
+    "nsclc",
+    "esca",
+    "tgct",
+    "cesc",
+    "bracs",
+    "herohe",
+    "ubc_ocean",
+]
+
+TASK_SPECS = {
+    "camelyon17": {
+        "num_classes": 4,
+        "label_dict": {"negative": 0, "itc": 1, "micro": 2, "macro": 3},
+        "dataset_type": "annotation_csv",
+        "label_col": "label",
+    },
+    "brca": {
+        "num_classes": 2,
+        "label_dict": {"IDC": 0, "ILC": 1},
+        "dataset_type": "annotation_csv",
+        "ignore": ["MDLC", "PD", "ACBC", "IMMC", "BRCNOS", "BRCA", "SPC", "MBC", "MPT"],
+    },
+    "rcc": {
+        "num_classes": 3,
+        "label_dict": {"CCRCC": 0, "PRCC": 1, "CHRCC": 2},
+        "dataset_type": "annotation_csv",
+    },
+    "nsclc": {
+        "num_classes": 2,
+        "label_dict": {"LUAD": 0, "LUSC": 1},
+        "dataset_type": "annotation_csv",
+    },
+    "esca": {
+        "num_classes": 2,
+        "label_dict": {0: 0, 1: 1},
+        "dataset_type": "split_csv",
+    },
+    "tgct": {
+        "num_classes": 2,
+        "label_dict": {0: 0, 1: 1},
+        "dataset_type": "split_csv",
+    },
+    "cesc": {
+        "num_classes": 2,
+        "label_dict": {0: 0, 1: 1},
+        "dataset_type": "split_csv",
+    },
+    "bracs": {
+        "num_classes": 3,
+        "label_dict": {"Group_BT": 0, "Group_AT": 1, "Group_MT": 2},
+        "dataset_type": "annotation_csv",
+        "label_col": "label",
+    },
+    "herohe": {
+        "num_classes": 2,
+        "label_dict": {"Negative": 0, "Positive": 1},
+        "dataset_type": "annotation_csv",
+        "label_col": "label",
+    },
+    "ubc_ocean": {
+        "num_classes": 5,
+        "label_dict": {"HGSC": 0, "EC": 1, "CC": 2, "LGSC": 3, "MC": 4},
+        "dataset_type": "annotation_csv",
+        "label_col": "label",
+    },
+}
+
+
+def get_task_specs(task_order=None):
+    order = task_order or DEFAULT_TASK_ORDER
+    return [TASK_SPECS[name] for name in order]
+
+
+def get_num_classes(task_order=None):
+    return [spec["num_classes"] for spec in get_task_specs(task_order)]
+
+
+def get_dict_classes(num_classes):
+    ranges, start = {}, 0
+    for task_id, n_classes in enumerate(num_classes):
+        ranges[task_id] = [start, start + n_classes - 1]
+        start += n_classes
+    return ranges
+
+
+def get_dict_convert_class(num_classes):
+    mapping, start = {}, 0
+    for task_id, n_classes in enumerate(num_classes):
+        mapping[task_id] = {local_id: start + local_id for local_id in range(n_classes)}
+        start += n_classes
+    return mapping
+
+
+def _normalize_slide_id(value):
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if text.endswith(".0"):
+        prefix = text[:-2]
+        if prefix.isdigit():
+            text = prefix
+    if text.endswith(".svs"):
+        text = text[:-4]
+    return text
+
+
+def _slide_stem(value):
+    return _normalize_slide_id(value)
+
+
+def _debug_io_enabled():
+    return os.environ.get("MERGESLIDE_DEBUG_IO", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _debug_io(message: str):
+    if _debug_io_enabled():
+        print(message, flush=True)
+
+
 # ---------------------------------------------------------------------------
 # Split generation helpers
 # ---------------------------------------------------------------------------
@@ -232,6 +358,7 @@ class Generic_WSI_Classification_Dataset(Dataset):
         slide_data = pd.read_csv(csv_path)
         slide_data = self.filter_df(slide_data, filter_dict)
         slide_data = self.df_prep(slide_data, self.label_dict, ignore, self.label_col)
+        slide_data['_split_id'] = slide_data['slide_id'].map(_normalize_slide_id)
         if shuffle:
             np.random.seed(seed)
             np.random.shuffle(slide_data)
@@ -269,6 +396,15 @@ class Generic_WSI_Classification_Dataset(Dataset):
             data['label'] = data[label_col].copy()
         data = data[~data['label'].isin(ignore)].reset_index(drop=True)
         data['label'] = data['label'].map(label_dict)
+        
+        # Kiểm tra lỗi (safety check) tránh chuyển nhãn lỗi thành NaN im lặng
+        nan_mask = data['label'].isna()
+        if nan_mask.any():
+            invalid_labels = data.loc[nan_mask, label_col].unique().tolist()
+            raise ValueError(
+                f"Lỗi: Tìm thấy các nhãn không hợp lệ hoặc chưa được định nghĩa trong label_dict: {invalid_labels}. "
+                f"Vui lòng kiểm tra lại file CSV annotation hoặc cấu hình label_dict."
+            )
         return data
 
     def filter_df(self, df, filter_dict: dict = {}):
@@ -318,7 +454,9 @@ class Generic_WSI_Classification_Dataset(Dataset):
     def get_split_from_df(self, all_splits, split_key='train'):
         split = all_splits[split_key].dropna().reset_index(drop=True)
         if len(split) > 0:
-            mask = self.slide_data['slide_id'].isin([i + '.svs' for i in split.tolist()])
+            split_ids = {_normalize_slide_id(i) for i in split.tolist()}
+            slide_ids = self.slide_data.get('_split_id', self.slide_data['slide_id'].map(_normalize_slide_id))
+            mask = slide_ids.isin(split_ids)
             df_slice = self.slide_data[mask].reset_index(drop=True)
             return Generic_Split(df_slice, data_dir=self.data_dir, num_classes=self.num_classes)
         return None
@@ -328,7 +466,9 @@ class Generic_WSI_Classification_Dataset(Dataset):
         for key in split_keys:
             merged_split.extend(all_splits[key].dropna().reset_index(drop=True).tolist())
         if merged_split:
-            mask = self.slide_data['slide_id'].isin(merged_split)
+            split_ids = {_normalize_slide_id(i) for i in merged_split}
+            slide_ids = self.slide_data.get('_split_id', self.slide_data['slide_id'].map(_normalize_slide_id))
+            mask = slide_ids.isin(split_ids)
             df_slice = self.slide_data[mask].reset_index(drop=True)
             return Generic_Split(df_slice, data_dir=self.data_dir, num_classes=self.num_classes)
         return None
@@ -343,7 +483,7 @@ class Generic_WSI_Classification_Dataset(Dataset):
             return _make_split(self.train_ids), _make_split(self.val_ids), _make_split(self.test_ids)
         else:
             assert csv_path
-            all_splits = pd.read_csv(csv_path, dtype=self.slide_data['slide_id'].dtype)
+            all_splits = pd.read_csv(csv_path, dtype=str)
             return (
                 self.get_split_from_df(all_splits, 'train'),
                 self.get_split_from_df(all_splits, 'val'),
@@ -399,21 +539,79 @@ class Generic_MIL_Dataset(Generic_WSI_Classification_Dataset):
     def __getitem__(self, idx):
         slide_id = self.slide_data['slide_id'][idx]
         label = self.slide_data['label'][idx]
-        h5_path = os.path.join(self.data_dir, 'h5_files', f"{slide_id.split('.svs')[0]}.h5")
-        with h5py.File(h5_path, 'r') as f:
-            try:
-                features = f['features'][:]
-                coords = f['coords'][:]
-            except Exception:
-                features = torch.load(
-                    os.path.join(self.data_dir, 'pt_files', f"{slide_id.split('.svs')[0]}.pt")
-                )
-                coords = f['coords'][:]
-        try:
+        stem = _slide_stem(slide_id)
+        debug = _debug_io_enabled()
+        start = time.time() if debug else None
+        h5_candidates = [
+            os.path.join(self.data_dir, 'h5_files', f"{stem}.h5"),
+            os.path.join(self.data_dir, 'features_conch_v15', f"{stem}.h5"),
+            os.path.join(self.data_dir, f"{stem}.h5"),
+        ]
+        pt_candidates = [
+            os.path.join(self.data_dir, 'pt_files', f"{stem}.pt"),
+            os.path.join(self.data_dir, f"{stem}.pt"),
+        ]
+
+        features, coords = None, None
+        coords_from_h5 = None
+        h5_missing_features = []
+        source_path = None
+        if debug:
+            _debug_io(f"[IO start] idx={idx} slide_id={slide_id} stem={stem} label={label}")
+        for h5_path in h5_candidates:
+            if os.path.exists(h5_path):
+                source_path = h5_path
+                if debug:
+                    _debug_io(f"[IO h5 open] {h5_path}")
+                with h5py.File(h5_path, 'r') as f:
+                    h5_coords = f['coords'][:] if 'coords' in f else None
+                    if h5_coords is not None:
+                        coords_from_h5 = h5_coords
+                    if 'features' not in f:
+                        h5_missing_features.append((h5_path, list(f.keys())))
+                        continue
+                    features = f['features'][:]
+                    coords = h5_coords if h5_coords is not None else coords_from_h5
+                break
+
+        if features is None:
+            for pt_path in pt_candidates:
+                if os.path.exists(pt_path):
+                    source_path = pt_path
+                    if debug:
+                        _debug_io(f"[IO pt load] {pt_path}")
+                    features = torch.load(pt_path, map_location='cpu')
+                    if isinstance(features, dict):
+                        coords = features.get('coords')
+                        features = features.get('features', features.get('feat', features))
+                    break
+
+        if features is None:
+            checked = h5_candidates + pt_candidates
+            raise FileNotFoundError(
+                f"No usable feature file found for slide_id={slide_id}. "
+                f"Checked: {checked}. H5 files missing 'features': {h5_missing_features}"
+            )
+
+        if not torch.is_tensor(features):
             features = torch.from_numpy(features)
-        except Exception:
-            pass
-        coords = torch.from_numpy(coords)
+        if coords is None and coords_from_h5 is not None:
+            coords = coords_from_h5
+        if coords is not None and not torch.is_tensor(coords):
+            coords = torch.from_numpy(coords)
+        if coords is not None and coords.shape[0] != features.shape[0]:
+            raise ValueError(
+                f"Feature/coord length mismatch for slide_id={slide_id}: "
+                f"features={features.shape[0]}, coords={coords.shape[0]}"
+            )
+        if coords is None:
+            coords = torch.zeros((features.shape[0], 2), dtype=torch.long)
+        if debug:
+            _debug_io(
+                f"[IO done] idx={idx} slide_id={slide_id} source={source_path} "
+                f"features={tuple(features.shape)} coords={tuple(coords.shape)} "
+                f"elapsed={time.time() - start:.3f}s"
+            )
         return features, coords, label
 
 
@@ -478,9 +676,20 @@ class Generic_MIL_Dataset2_Split:
         slide_id = self.data[idx]
         label = self.label[idx]
         h5_path = os.path.join(self.data_dir, 'h5_files', f"{slide_id}.h5")
+        debug = _debug_io_enabled()
+        start = time.time() if debug else None
+        if debug:
+            _debug_io(f"[IO start] idx={idx} slide_id={slide_id} label={label}")
+            _debug_io(f"[IO h5 open] {h5_path}")
         with h5py.File(h5_path, 'r') as f:
             features = torch.from_numpy(f['features'][:])
             coords = torch.from_numpy(f['coords'][:])
+        if debug:
+            _debug_io(
+                f"[IO done] idx={idx} slide_id={slide_id} source={h5_path} "
+                f"features={tuple(features.shape)} coords={tuple(coords.shape)} "
+                f"elapsed={time.time() - start:.3f}s"
+            )
         return features, coords, label
 
 
@@ -519,11 +728,11 @@ class ConcatDataset(Dataset):
 
 
 # ---------------------------------------------------------------------------
-# Sequential stream of all 6 TCGA tasks
+# Sequential stream of configured WSI tasks
 # ---------------------------------------------------------------------------
 
 class Sequential_Generic_MIL_Dataset(ContinualDataset):
-    """6-task continual learning stream: BRCA → RCC → NSCLC → ESCA → TGCT → CESC.
+    """Continual learning stream configured by task_order in datasets.yaml.
 
     Dataset paths are read from configs/datasets.yaml (git-ignored).
     Copy configs/datasets.yaml.example → configs/datasets.yaml and set your data_root.
@@ -533,7 +742,7 @@ class Sequential_Generic_MIL_Dataset(ContinualDataset):
     NAME = 'seq-wsi'
     SETTING = 'class-il'
     N_CLASSES_PER_TASK = 2
-    N_TASKS = 6
+    N_TASKS = len(DEFAULT_TASK_ORDER)
     TRANSFORM = None
 
     def __init__(self, config_path: str = None):
@@ -543,45 +752,60 @@ class Sequential_Generic_MIL_Dataset(ContinualDataset):
         """
         super().__init__()
         cfg = load_config(config_path, default_filename="train.yaml")
-        self.datasets = [
-            Generic_MIL_Dataset(
-                csv_path=cfg['brca_csv'], data_dir=cfg['brca_features'],
-                shuffle=False, seed=0, print_info=True,
-                label_dict={'IDC': 0, 'ILC': 1}, patient_strat=False,
-                ignore=['MDLC', 'PD', 'ACBC', 'IMMC', 'BRCNOS', 'BRCA', 'SPC', 'MBC', 'MPT'],
-            ),
-            Generic_MIL_Dataset(
-                csv_path=cfg['rcc_csv'], data_dir=cfg['rcc_features'],
-                shuffle=False, seed=0, print_info=True,
-                label_dict={'CCRCC': 0, 'PRCC': 1, 'CHRCC': 2}, patient_strat=False, ignore=[],
-            ),
-            Generic_MIL_Dataset(
-                csv_path=cfg['nsclc_csv'], data_dir=cfg['nsclc_features'],
-                shuffle=False, seed=0, print_info=True,
-                label_dict={'LUAD': 0, 'LUSC': 1}, patient_strat=False, ignore=[],
-            ),
-            Generic_MIL_Dataset2(data_dir=cfg['esca_features'], label_dict={0: 0, 1: 1}),
-            Generic_MIL_Dataset2(data_dir=cfg['tgct_features'], label_dict={0: 0, 1: 1}),
-            Generic_MIL_Dataset2(data_dir=cfg['cesc_features'], label_dict={0: 0, 1: 1}),
-        ]
+        self.task_order = cfg.get("task_order", DEFAULT_TASK_ORDER)
+        self.task_specs = get_task_specs(self.task_order)
+        self.num_classes = [spec["num_classes"] for spec in self.task_specs]
+        self.N_TASKS = len(self.task_order)
+        self.datasets = []
+        for task_name, spec in zip(self.task_order, self.task_specs):
+            data_dir = cfg["features"].get(task_name, "")
+            if spec["dataset_type"] == "split_csv":
+                self.datasets.append(
+                    Generic_MIL_Dataset2(data_dir=data_dir, label_dict=spec["label_dict"])
+                )
+            else:
+                csv_path = cfg["annotations"].get(task_name, "")
+                self.datasets.append(
+                    Generic_MIL_Dataset(
+                        csv_path=csv_path,
+                        data_dir=data_dir,
+                        shuffle=False,
+                        seed=0,
+                        print_info=True,
+                        label_dict=spec["label_dict"],
+                        patient_strat=False,
+                        ignore=spec.get("ignore", []),
+                        label_col=spec.get("label_col"),
+                    )
+                )
+        # load_config() đã trả về split_dirs là list theo task_order (loader.py dòng 111)
+        # Không cần index lại bằng tên — gán trực tiếp
         self.split_dirs = cfg['split_dirs']
+        dataloader_cfg = cfg.get("dataloader", {})
+        self.num_workers = int(
+            os.environ.get("MERGESLIDE_NUM_WORKERS", dataloader_cfg.get("num_workers", 4))
+        )
 
-    def get_data_loaders(self, fold: int, task_id: int) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    def get_data_loaders(self, fold: int, task_id: int, num_workers: int = None) -> Tuple[DataLoader, DataLoader, DataLoader]:
         """Return (train, val, test) loaders for a given fold and task."""
         dataset = self.datasets[task_id]
         split_csv = f"{self.split_dirs[task_id]}/splits_{fold}.csv"
         train_dataset, val_dataset, test_dataset = dataset.return_splits(from_id=False, csv_path=split_csv)
-        train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=4, collate_fn=collate_MIL)
-        val_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=True, num_workers=4, collate_fn=collate_MIL)
-        test_loader  = DataLoader(test_dataset,  batch_size=1, shuffle=False, num_workers=4, collate_fn=collate_MIL)
+        workers = self.num_workers if num_workers is None else int(num_workers)
+        train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=workers, collate_fn=collate_MIL)
+        val_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=True, num_workers=workers, collate_fn=collate_MIL)
+        test_loader  = DataLoader(test_dataset,  batch_size=1, shuffle=False, num_workers=workers, collate_fn=collate_MIL)
         self.test_loaders.append(test_loader)
         self.train_loader = train_loader
         self.val_loader = val_loader
         return train_loader, val_loader, test_loader
 
-    def get_joint_data_loaders(self, fold: int) -> Tuple[DataLoader, DataLoader, DataLoader]:
-        """Return joint loaders over all tasks (for joint/multi-task baseline)."""
-        train_datasets, val_datasets = [], []
+    def get_joint_data_loaders(self, fold: int) -> Tuple[DataLoader, DataLoader, List[DataLoader]]:
+        """Return joint loaders over all tasks (for joint/multi-task baseline).
+        Returns (train_loader, val_loader, test_loaders) where test_loaders is a
+        list of per-task test loaders (one per task).
+        """
+        train_datasets, val_datasets, all_test_loaders = [], [], []
         for n in range(self.N_TASKS):
             print(f"Loading dataset {n}")
             dataset = self.datasets[n]
@@ -589,15 +813,16 @@ class Sequential_Generic_MIL_Dataset(ContinualDataset):
             train_dataset, val_dataset, test_dataset = dataset.return_splits(from_id=False, csv_path=split_csv)
             train_datasets.append(train_dataset)
             val_datasets.append(val_dataset)
-            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=4, collate_fn=collate_MIL)
+            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=self.num_workers, collate_fn=collate_MIL)
+            all_test_loaders.append(test_loader)
             self.test_loaders.append(test_loader)
 
-        train_loader = DataLoader(ConcatDataset(train_datasets), batch_size=1, shuffle=True, num_workers=4, collate_fn=collate_MIL)
-        val_loader   = DataLoader(ConcatDataset(val_datasets),   batch_size=1, shuffle=True, num_workers=4, collate_fn=collate_MIL)
+        train_loader = DataLoader(ConcatDataset(train_datasets), batch_size=1, shuffle=True, num_workers=self.num_workers, collate_fn=collate_MIL)
+        val_loader   = DataLoader(ConcatDataset(val_datasets),   batch_size=1, shuffle=True, num_workers=self.num_workers, collate_fn=collate_MIL)
         self.i = self.N_CLASSES_PER_TASK * self.N_TASKS
         self.train_loader = train_loader
         self.val_loader = val_loader
-        return train_loader, val_loader, test_loader
+        return train_loader, val_loader, all_test_loaders
 
 
 if __name__ == '__main__':

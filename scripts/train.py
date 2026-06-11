@@ -23,7 +23,7 @@ from tqdm import tqdm
 from transformers import AutoModel
 
 from configs.loader import load_config
-from mergeslide.datasets import Sequential_Generic_MIL_Dataset
+from mergeslide.datasets import Sequential_Generic_MIL_Dataset, get_dict_classes
 from mergeslide.models import CustomSequential, EarlyStopping, cosine_lr, create_mlp
 from mergeslide.prompts import ALL_TASK_PROMPTS, TEMPLATES
 from mergeslide.utils import get_eval_metrics, seed_torch
@@ -31,15 +31,8 @@ from mergeslide.utils import get_eval_metrics, seed_torch
 # Patch sampling budget per forward pass
 K = 400
 
-# Map task_id → column indices in the joint classifier matrix
-DICT_CLASSES = {
-    0: [0, 1],
-    1: [2, 4],
-    2: [5, 6],
-    3: [7, 8],
-    4: [9, 10],
-    5: [11, 12],
-}
+# DICT_CLASSES sẽ được tính động sau khi load seq_dataset
+# (tránh hardcode class ranges khi thêm/bớt task)
 
 
 def build_classifier(titan_model, device: str):
@@ -254,9 +247,10 @@ if __name__ == "__main__":
             use_wandb = False
 
     device_str = str(device)
-    num_tasks = 6
-    num_classes = [2, 3, 2, 2, 2, 2]
     seq_dataset = Sequential_Generic_MIL_Dataset()
+    num_classes = seq_dataset.num_classes
+    num_tasks = len(num_classes)
+    dict_classes = get_dict_classes(num_classes)
 
     # Load TITAN once for prompt encoding
     titan_model = AutoModel.from_pretrained('MahmoodLab/TITAN', trust_remote_code=True)
@@ -290,7 +284,7 @@ if __name__ == "__main__":
             mlp.bias.data.zero_()
 
             # Initialize MLP weights from class-aware prompt prototypes
-            col_lo, col_hi = DICT_CLASSES[task_id]
+            col_lo, col_hi = dict_classes[task_id]
             prompt_prototypes = classifier[:, col_lo:col_hi + 1]
             mlp.weight.data = prompt_prototypes.T
 
