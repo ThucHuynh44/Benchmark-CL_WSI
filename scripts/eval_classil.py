@@ -33,8 +33,8 @@ from tqdm import tqdm
 from transformers import AutoModel
 
 from configs.loader import load_config
-from mergeslide.datasets import Sequential_Generic_MIL_Dataset, get_dict_classes, get_dict_convert_class
-from mergeslide.models import CustomSequential, pad_numpy_arrays
+from mergeslide.datasets import Sequential_Generic_MIL_Dataset, get_dict_convert_class
+from mergeslide.models import CustomSequential
 from mergeslide.prompts import ALL_TASK_PROMPTS, TEMPLATES
 from mergeslide.utils import get_eval_metrics, seed_torch
 
@@ -60,8 +60,17 @@ def load_mlp_weights(task_model_paths: list) -> list:
     """Load the MLP head state dict for each task."""
     weights = []
     for path in task_model_paths:
-        raw = torch.load(path, map_location='cpu')
-        mlp_state = {k.split('mlp.')[-1]: raw[k] for k in list(raw.keys())[-2:]}
+        raw = torch.load(path, map_location="cpu")
+        mlp_state = {}
+        for key, value in raw.items():
+            if key.endswith("mlp.weight"):
+                mlp_state["weight"] = value
+            elif key.endswith("mlp.bias"):
+                mlp_state["bias"] = value
+
+        if "weight" not in mlp_state or "bias" not in mlp_state:
+            raise KeyError(f"Cannot find mlp.weight/mlp.bias in checkpoint: {path}")
+
         weights.append(mlp_state)
     return weights
 
@@ -107,14 +116,14 @@ def evaluate_task(
     test_loader,
     task_id: int,
     model,
-    dict_class: dict,
     num_classes: list,
     device,
     task_prompts,
     task_weights: list,
+    dict_convert_class: dict,
     prefix: str = "",
 ):
-    """Run CLASS-IL inference on one task's test set.
+    """Run CLASS-IL inference on one task's test set using global labels.
 
     Returns:
         (eval_metrics, preds_all, targets_all, slide_per_task, slide_per_class,
@@ -126,6 +135,7 @@ def evaluate_task(
     predicted_task_ids = []
     slide_per_task, slide_per_class = [], {}
     times = []
+    total_num_classes = sum(num_classes)
 
     with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
         for features, coords, label in tqdm(test_loader):
@@ -142,37 +152,40 @@ def evaluate_task(
 
             mlp = nn.Linear(768, num_classes[predicted_task_id]).to(device)
             mlp.load_state_dict(task_weights[predicted_task_id])
+            mlp.eval()
             logits = mlp(slide_embed).float()
-            preds = logits.argmax(1)
+            probs_local = nn.functional.softmax(logits, dim=1)
+            pred_local = int(logits.argmax(1).item())
             times.append(time.time() - start)
 
-            probs = nn.functional.softmax(logits, dim=1)
-            preds_all.append(preds.cpu().numpy())
-            probs_all.append(probs.cpu().numpy())
-            targets_all.append(label.numpy())
+            true_local = int(label[0])
+            true_global = dict_convert_class[task_id][true_local]
+            pred_global = dict_convert_class[predicted_task_id][pred_local]
+
+            probs_global = np.zeros((1, total_num_classes), dtype=np.float32)
+            for local_idx, global_idx in dict_convert_class[predicted_task_id].items():
+                probs_global[0, global_idx] = float(probs_local[0, local_idx].detach().cpu())
+
+            preds_all.append(np.array([pred_global], dtype=np.int64))
+            targets_all.append(np.array([true_global], dtype=np.int64))
+            probs_all.append(probs_global)
 
             slide_per_task.append(slide_embed)
-            global_label = DICT_CONVERT_CLASS[task_id][int(label)]
-            slide_per_class.setdefault(global_label, []).append(slide_embed)
+            slide_per_class.setdefault(true_global, []).append(slide_embed)
 
-            convert_targets_all.append(torch.Tensor([dict_class[int(label[0])]]))
-            try:
-                convert_preds_all.append(torch.Tensor([dict_class[int(preds[0])]]))
-            except Exception:
-                convert_preds_all.append(torch.Tensor([4]))
+            convert_targets_all.append(np.array([true_global], dtype=np.int64))
+            convert_preds_all.append(np.array([pred_global], dtype=np.int64))
 
     preds_all = np.concatenate(preds_all)
     targets_all = np.concatenate(targets_all)
-    try:
-        probs_all = np.concatenate(probs_all)
-    except ValueError:
-        probs_all = pad_numpy_arrays(probs_all)
+    probs_all = np.concatenate(probs_all)
 
     convert_preds_all = np.concatenate(convert_preds_all)
     convert_targets_all = np.concatenate(convert_targets_all)
 
-    roc_kwargs = {"multi_class": "ovo", "average": "macro"}
-    eval_metrics = get_eval_metrics(targets_all, preds_all, probs_all, roc_kwargs=roc_kwargs, prefix=prefix)
+    eval_metrics = {
+        f"{prefix}/acc": float(np.mean(preds_all == targets_all))
+    }
 
     return (
         eval_metrics, preds_all, targets_all,
@@ -281,7 +294,6 @@ if __name__ == "__main__":
     num_classes = num_classes[:num_tasks]
     # Tính động class ranges theo num_classes thực tế
     DICT_CONVERT_CLASS = get_dict_convert_class(num_classes)
-    dict_classes = get_dict_classes(num_classes)  # task_id → [col_lo, col_hi]
 
     # Load TITAN base model
     titan_model = AutoModel.from_pretrained('MahmoodLab/TITAN', trust_remote_code=True).to(device)
@@ -327,9 +339,15 @@ if __name__ == "__main__":
                 (results, preds_all, targets_all, slide_per_task, slide_per_class,
                  probs_all, convert_preds_all, convert_targets_all,
                  predicted_task_ids, sum_time) = evaluate_task(
-                    test_loader, task_id, model,
-                    DICT_CONVERT_CLASS[task_id], num_classes, device,
-                    task_prompts_fold, mlp_task_weights, prefix="",
+                    test_loader=test_loader,
+                    task_id=task_id,
+                    model=model,
+                    num_classes=num_classes,
+                    device=device,
+                    task_prompts=task_prompts_fold,
+                    task_weights=mlp_task_weights,
+                    dict_convert_class=DICT_CONVERT_CLASS,
+                    prefix="",
                 )
                 routing_confusion[task_id] += np.bincount(
                     predicted_task_ids, minlength=num_tasks
@@ -350,12 +368,16 @@ if __name__ == "__main__":
             if len(probs_all.shape) == 3:
                 probs_all = probs_all.squeeze(1)
             if mode == "tcp":
-                for i in range(len(DICT_CONVERT_CLASS[task_id])):
-                    y_true_binary = (targets_all == i).astype(int)
-                    aucs.append(roc_auc_score(y_true_binary, probs_all[:, i]))
+                for global_idx in DICT_CONVERT_CLASS[task_id].values():
+                    y_true_binary = (targets_all == global_idx).astype(int)
+                    if len(np.unique(y_true_binary)) < 2:
+                        continue
+                    aucs.append(roc_auc_score(y_true_binary, probs_all[:, global_idx]))
             else:
                 for global_idx in DICT_CONVERT_CLASS[task_id].values():
                     y_true_binary = (targets_all == global_idx).astype(int)
+                    if len(np.unique(y_true_binary)) < 2:
+                        continue
                     aucs.append(roc_auc_score(y_true_binary, probs_all[:, global_idx]))
 
         all_labels = np.concatenate(all_labels)

@@ -154,20 +154,43 @@ def rcc_prompts():
     return prompts, TEMPLATES
 
 
+# def esca_prompts():
+#     """TCGA-ESCA: Esophageal Adenocarcinoma vs. Squamous Cell Carcinoma."""
+#     prompts = [
+#         [
+#             'adenocarcinoma',
+#             'esophageal adenocarcinoma',
+#             'adenocarcinoma of the esophagus',
+#             'esad',
+#         ],
+#         [
+#             'squamous cell carcinoma',
+#             'esophageal squamous cell carcinoma',
+#             'squamous cell carcinoma of the esophagus',
+#             'essc',
+#         ],
+#     ]
+#     return prompts, TEMPLATES
+
+
 def esca_prompts():
-    """TCGA-ESCA: Esophageal Adenocarcinoma vs. Squamous Cell Carcinoma."""
+    """TCGA-ESCA: esophagus-site prompts for adenocarcinoma vs. squamous carcinoma."""
     prompts = [
         [
-            'adenocarcinoma',
-            'esophageal adenocarcinoma',
-            'adenocarcinoma of the esophagus',
-            'esad',
+            'esophageal adenocarcinoma in esophagus tissue',
+            'adenocarcinoma arising from esophageal mucosa',
+            'gastroesophageal junction adenocarcinoma in an esophageal WSI',
+            'TCGA ESCA esophageal adenocarcinoma slide',
+            'malignant gland-forming tumor of the esophagus',
+            'esophagus cancer, adenocarcinoma subtype',
         ],
         [
-            'squamous cell carcinoma',
-            'esophageal squamous cell carcinoma',
-            'squamous cell carcinoma of the esophagus',
-            'essc',
+            'esophageal squamous cell carcinoma in esophagus tissue',
+            'squamous carcinoma arising from esophageal squamous mucosa',
+            'TCGA ESCA esophageal squamous cell carcinoma slide',
+            'malignant squamous tumor of the esophagus',
+            'esophagus cancer, squamous cell carcinoma subtype',
+            'keratinizing squamous carcinoma in esophageal tissue',
         ],
     ]
     return prompts, TEMPLATES
@@ -190,18 +213,41 @@ def tgct_prompts():
     return prompts, TEMPLATES
 
 
+# def cesc_prompts():
+#     """TCGA-CESC: Cervical Adenocarcinoma vs. Squamous Cell Carcinoma."""
+#     prompts = [
+#         [
+#             'adenocarcinoma',
+#             'cervical adenocarcinoma',
+#             'adenocarcinoma of the cervix uteri',
+#         ],
+#         [
+#             'squamous cell carcinoma',
+#             'cervical squamous cell carcinoma',
+#             'squamous cell carcinoma of the cervix uteri',
+#         ],
+#     ]
+#     return prompts, TEMPLATES
+
+
 def cesc_prompts():
-    """TCGA-CESC: Cervical Adenocarcinoma vs. Squamous Cell Carcinoma."""
+    """TCGA-CESC: cervix-site prompts for adenocarcinoma vs. squamous carcinoma."""
     prompts = [
         [
-            'adenocarcinoma',
-            'cervical adenocarcinoma',
-            'adenocarcinoma of the cervix uteri',
+            'endocervical adenocarcinoma in uterine cervix tissue',
+            'cervical adenocarcinoma arising from endocervical glandular mucosa',
+            'TCGA CESC cervical adenocarcinoma slide',
+            'malignant gland-forming tumor of the cervix uteri',
+            'uterine cervix cancer, adenocarcinoma subtype',
+            'adenocarcinoma in cervical tissue, not esophageal tissue',
         ],
         [
-            'squamous cell carcinoma',
-            'cervical squamous cell carcinoma',
-            'squamous cell carcinoma of the cervix uteri',
+            'cervical squamous cell carcinoma in uterine cervix tissue',
+            'squamous carcinoma arising from cervical squamous epithelium',
+            'TCGA CESC cervical squamous cell carcinoma slide',
+            'malignant squamous tumor of the cervix uteri',
+            'uterine cervix cancer, squamous cell carcinoma subtype',
+            'squamous cell carcinoma in cervical tissue, not esophageal tissue',
         ],
     ]
     return prompts, TEMPLATES
