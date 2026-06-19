@@ -1,0 +1,16 @@
+# A-GEM baseline with TITAN vision encoder and no text prompts.
+agem:
+  num_epochs: 10
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  buffer_size: 30
+  save_dir: "./checkpoints/agem_titan_buffer30"
+  num_folds: 10
+  num_workers: 4
+  # 0 means use the full WSI feature bag; positive k randomly samples up to k patches.
+  k: 400
+  patch_size: 1024
+  seed: 0
+  freeze_backbone: false
+  eval_after_task: true
+  mask_unseen_eval: true

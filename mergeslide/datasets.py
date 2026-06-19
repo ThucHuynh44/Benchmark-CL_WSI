@@ -93,10 +93,6 @@ class ContinualDataset:
     def get_batch_size():
         pass
 
-    @staticmethod
-    def get_minibatch_size():
-        pass
-
 
 # ---------------------------------------------------------------------------
 # Loader helpers

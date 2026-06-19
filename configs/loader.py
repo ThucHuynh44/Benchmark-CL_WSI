@@ -115,6 +115,9 @@ def load_config(path: str = None, default_filename: str = "train.yaml") -> dict:
         "training": raw.get("training", {}),
         "merging": raw.get("merging", {}),
         "evaluation": raw.get("evaluation", {}),
+        "derpp": raw.get("derpp", {}),
+        "agem": raw.get("agem", {}),
+        "er_ace": raw.get("er_ace", {}),
         # Hugging Face token
         "hf_token": hf_token,
         # Task metadata

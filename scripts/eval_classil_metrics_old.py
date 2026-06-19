@@ -27,7 +27,7 @@ from transformers import AutoModel
 
 from configs.loader import load_config
 from mergeslide.datasets import Sequential_Generic_MIL_Dataset, get_dict_convert_class
-from mergeslide.models import CustomSequential
+from mergeslide.models import CustomSequential, pad_numpy_arrays
 from mergeslide.utils import get_eval_metrics, seed_torch
 
 # Patch sampling budget per forward pass
@@ -70,33 +70,28 @@ def backward_transfer(results: list) -> float:
 
 def evaluate(
     test_loader,
-    task_id: int,
     model,
     num_classes: list,
     device,
     task_prompts,
     task_model_paths: list,
-    dict_convert_class: dict,
     prefix: str = "",
 ):
     """Run CLASS-IL inference using task-to-class prompt routing.
 
     Args:
         test_loader: DataLoader for the test set.
-        task_id: Ground-truth task id for this test loader.
         model: CustomSequential with merged backbone.
         num_classes: Number of classes per task.
         device: Target device.
         task_prompts: Task prompt embeddings (one per task, stacked).
         task_model_paths: Paths to per-task finetuned checkpoints.
-        dict_convert_class: Mapping from task-local class ids to global class ids.
         prefix: Metric key prefix.
 
     Returns:
         (eval_metrics, preds_all, targets_all)
     """
     preds_all, probs_all, targets_all = [], [], []
-    total_num_classes = sum(num_classes)
 
     with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
         for features, coords, label in tqdm(test_loader, leave=False):
@@ -113,23 +108,18 @@ def evaluate(
             mlp.load_state_dict(mlp_state)
 
             logits = mlp(slide_embed).float()
-            probs_local = nn.functional.softmax(logits, dim=1)
-            pred_local = int(logits.argmax(1).item())
+            preds = logits.argmax(1)
+            probs = nn.functional.softmax(logits, dim=1)
 
-            true_local = int(label[0])
-            true_global = dict_convert_class[task_id][true_local]
-            pred_global = dict_convert_class[predicted_task_id][pred_local]
-
-            probs_global = np.zeros((1, total_num_classes), dtype=np.float32)
-            for local_idx, global_idx in dict_convert_class[predicted_task_id].items():
-                probs_global[0, global_idx] = float(probs_local[0, local_idx].detach().cpu())
-
-            preds_all.append(np.array([pred_global], dtype=np.int64))
-            probs_all.append(probs_global)
-            targets_all.append(np.array([true_global], dtype=np.int64))
+            preds_all.append(preds.cpu().numpy())
+            probs_all.append(probs.cpu().numpy())
+            targets_all.append(label.numpy())
 
     preds_all = np.concatenate(preds_all)
-    probs_all = np.concatenate(probs_all)
+    try:
+        probs_all = np.concatenate(probs_all)
+    except ValueError:
+        probs_all = pad_numpy_arrays(probs_all)
     targets_all = np.concatenate(targets_all)
 
     roc_kwargs = {"multi_class": "ovo", "average": "macro"}
@@ -269,10 +259,9 @@ if __name__ == "__main__":
                 _, _, test_loader = seq_dataset.get_data_loaders(fold_id, task_id, num_workers=num_workers)
                 if mode == "tcp":
                     results, preds_all, targets_all = evaluate(
-                        test_loader, task_id, model,
+                        test_loader, model,
                         num_classes[:seq_task], device,
                         task_prompts, task_model_paths[:seq_task],
-                        DICT_CONVERT_CLASS,
                     )
                 else:
                     results, preds_all, targets_all = evaluate_naive(
