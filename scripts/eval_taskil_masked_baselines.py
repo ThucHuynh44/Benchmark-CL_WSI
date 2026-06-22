@@ -21,6 +21,7 @@ os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 
 import argparse
 import csv
+import warnings
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -193,6 +194,8 @@ def main() -> None:
     parser.add_argument("--after_task", type=int, default=None, help="Evaluate one checkpoint sequence only.")
     parser.add_argument("--final_only", action="store_true", help="Evaluate only the final after-task checkpoint.")
     parser.add_argument("--allow_missing", action="store_true", help="Skip missing checkpoints instead of raising.")
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--disable_wandb", action="store_true")
     args = parser.parse_args()
 
     defaults = METHOD_DEFAULTS[args.method]
@@ -206,6 +209,13 @@ def main() -> None:
     k = int(_cfg_value(args, method_cfg, "k", 400))
     patch_size = int(_cfg_value(args, method_cfg, "patch_size", 1024))
     seed = int(_cfg_value(args, method_cfg, "seed", 0))
+    use_wandb = (args.use_wandb or method_cfg.get("use_wandb", False)) and not args.disable_wandb
+    if use_wandb:
+        try:
+            import wandb  # noqa: F401
+        except ImportError:
+            warnings.warn("wandb package not found. Disabling wandb tracking.")
+            use_wandb = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed_torch(device, seed)
@@ -232,6 +242,24 @@ def main() -> None:
     raw_rows: List[dict] = []
 
     for fold_id in tqdm(range(int(args.fold_start), fold_end), desc="folds"):
+        if use_wandb:
+            import wandb
+            wandb.init(
+                project=method_cfg.get("wandb_project", f"MergeSlide-{args.method.upper()}"),
+                entity=method_cfg.get("wandb_entity"),
+                group=f"{args.method}_eval_taskil_masked",
+                job_type="eval_taskil_masked",
+                name=f"{args.method}_masked_taskil_fold_{fold_id}",
+                config={
+                    "fold": fold_id,
+                    "method": args.method,
+                    "num_tasks": num_tasks,
+                    "k": k,
+                    "patch_size": patch_size,
+                    "after_tasks": after_tasks,
+                },
+                reinit=True,
+            )
         base_model = AutoModel.from_pretrained("MahmoodLab/TITAN", trust_remote_code=True).to(device)
         model = TitanGlobalClassifier(base_model, total_classes).to(device)
 
@@ -270,6 +298,25 @@ def main() -> None:
                     f"masked eval fold={fold_id} after_task={after_task} task={eval_task_id}: "
                     f"masked_acc={metrics['masked_acc']:.4f} masked_bacc={metrics['masked_bacc']:.4f}"
                 )
+                if use_wandb:
+                    import wandb
+                    wandb.log({
+                        "eval/after_task": after_task,
+                        "eval/task_id": eval_task_id,
+                        **{f"eval/{key}": value for key, value in metrics.items()},
+                    })
+
+        if use_wandb:
+            import wandb
+            fold_rows = [row for row in raw_rows if int(row["fold"]) == fold_id]
+            if fold_rows:
+                final_after_task = max(int(row["after_task"]) for row in fold_rows)
+                final_rows = [row for row in fold_rows if int(row["after_task"]) == final_after_task]
+                wandb.log({
+                    "eval/final_masked_acc": float(np.mean([row["masked_acc"] for row in final_rows])),
+                    "eval/final_masked_bacc": float(np.mean([row["masked_bacc"] for row in final_rows])),
+                })
+            wandb.finish()
 
     output_csv = args.output_csv or os.path.join(ckpt_dir, f"{prefix}_taskil_masked_eval.csv")
     summary_csv = args.summary_csv or os.path.join(ckpt_dir, f"{prefix}_taskil_masked_summary_per_fold.csv")

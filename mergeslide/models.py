@@ -43,7 +43,7 @@ class EarlyStopping:
     def __call__(self, val_loss: float, model: nn.Module):
         if self.best_score is None:
             self.best_score = val_loss
-            self.best_model_weights = model.state_dict()
+            self.best_model_weights = {k: v.cpu().clone() for k, v in model.state_dict().items()}
         elif val_loss > self.best_score - self.min_delta:
             self.counter += 1
             if self.verbose:
@@ -53,7 +53,7 @@ class EarlyStopping:
         else:
             self.best_score = val_loss
             self.counter = 0
-            self.best_model_weights = model.state_dict()
+            self.best_model_weights = {k: v.cpu().clone() for k, v in model.state_dict().items()}
 
 
 def cosine_lr(optimizer, base_lr: float, warmup_length: int, steps: int):

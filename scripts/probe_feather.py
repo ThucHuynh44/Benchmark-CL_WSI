@@ -16,6 +16,7 @@ os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 
 import h5py
 import torch
+import yaml
 
 from mergeslide.feather_models import (
     DEFAULT_FEATHER_MODEL_NAME,
@@ -25,6 +26,18 @@ from mergeslide.feather_models import (
     prepare_hf_token_env,
 )
 from mergeslide.utils import seed_torch
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+FEATHER_CONFIG = REPO_ROOT / "configs" / "feather.yaml"
+
+
+def _config_token():
+    if not FEATHER_CONFIG.exists():
+        return None
+    with open(FEATHER_CONFIG, "r") as handle:
+        raw = yaml.safe_load(handle) or {}
+    return raw.get("feather", {}).get("hf_token")
 
 
 def _load_features(path: str, k: int) -> torch.Tensor:
@@ -49,7 +62,7 @@ def main() -> None:
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     seed_torch(device, 0)
-    token = prepare_hf_token_env()
+    token = prepare_hf_token_env(_config_token())
     print(f"[FEATHER] HF token available: {bool(token)}")
     print(f"[FEATHER] model_name={args.model_name}")
 

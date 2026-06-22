@@ -17,11 +17,16 @@ import torch.nn as nn
 
 DEFAULT_FEATHER_MODEL_NAME = "abmil.base.conch_v15.pc108-24k"
 DEFAULT_FEATURE_DIM = 768
+HEAD_NAME_TOKENS = ("head", "classifier", "classif", "fc", "logit", "output")
 
 
-def prepare_hf_token_env() -> Optional[str]:
-    """Expose HF_TOKEN under common Hugging Face env names without persisting it."""
-    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+def prepare_hf_token_env(config_token: Optional[str] = None) -> Optional[str]:
+    """Expose an HF token under common Hugging Face env names for this process."""
+    token = (
+        os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        or config_token
+    )
     if token:
         os.environ.setdefault("HF_TOKEN", token)
         os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", token)
@@ -49,6 +54,7 @@ def import_create_model() -> Callable[..., nn.Module]:
         return _load_from_spec(custom_spec)
 
     candidates = [
+        ("src.builder", "create_model"),
         ("mil_lab", "create_model"),
         ("mil_lab.models", "create_model"),
         ("mil_lab.models.builder", "create_model"),
@@ -84,6 +90,15 @@ def _signature_accepts(signature: inspect.Signature, name: str) -> bool:
     )
 
 
+def _random_init_model_name(model_name: str) -> str:
+    """Replace a pretrained task suffix with MIL-Lab's random-init ``none`` task."""
+    parts = model_name.split(".")
+    if len(parts) >= 4:
+        parts[-1] = "none"
+        return ".".join(parts)
+    return model_name
+
+
 def create_feather_model(
     model_name: str = DEFAULT_FEATHER_MODEL_NAME,
     *,
@@ -94,6 +109,7 @@ def create_feather_model(
     """Create a FEATHER MIL-Lab model."""
     prepare_hf_token_env()
     create_model = import_create_model()
+    resolved_model_name = model_name if from_pretrained else _random_init_model_name(model_name)
     kwargs: Dict[str, Any] = {"num_classes": num_classes}
 
     try:
@@ -114,12 +130,12 @@ def create_feather_model(
                 kwargs[key] = value
 
     try:
-        return create_model(model_name, **kwargs)
+        return create_model(resolved_model_name, **kwargs)
     except TypeError:
         # Some registries accept only the model name and task kwargs.
         kwargs.pop("from_pretrained", None)
         kwargs.pop("pretrained", None)
-        return create_model(model_name, **kwargs)
+        return create_model(resolved_model_name, **kwargs)
 
 
 def sample_patch_bag(
@@ -135,12 +151,61 @@ def sample_patch_bag(
     return features[indices], sampled_coords
 
 
-def freeze_feather_backbone(model: nn.Module) -> Tuple[int, int]:
-    """Freeze likely backbone parameters while keeping classifier-like heads trainable."""
-    head_tokens = ("head", "classifier", "classif", "fc", "logit", "output")
+def get_feather_classifier_state_keys(model: nn.Module, num_classes: int) -> Tuple[str, ...]:
+    """Return the state-dict keys for FEATHER's final linear classifier."""
+    candidates = []
+    for module_name, module in model.named_modules():
+        if not isinstance(module, nn.Linear) or module.out_features != num_classes:
+            continue
+        is_named_head = any(token in module_name.lower() for token in HEAD_NAME_TOKENS)
+        candidates.append((is_named_head, module_name, module))
+
+    if not candidates:
+        raise RuntimeError(
+            "Could not identify the FEATHER classifier. Expected an nn.Linear "
+            f"with out_features={num_classes}."
+        )
+
+    # Prefer an explicitly named classifier/head; otherwise the final matching linear layer.
+    named_candidates = [candidate for candidate in candidates if candidate[0]]
+    _, module_name, module = (named_candidates or candidates)[-1]
+    keys = [f"{module_name}.weight"]
+    if module.bias is not None:
+        keys.append(f"{module_name}.bias")
+    return tuple(keys)
+
+
+def split_feather_state_dict(
+    model: nn.Module,
+    num_classes: int,
+) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor], Tuple[str, ...]]:
+    """Split a FEATHER state dict into mergeable backbone and task-head weights."""
+    state_dict = model.state_dict()
+    classifier_keys = get_feather_classifier_state_keys(model, num_classes)
+    classifier_root = classifier_keys[0].rsplit(".", 1)[0]
+    head_keys = {
+        key for key in state_dict
+        if key == classifier_root or key.startswith(f"{classifier_root}.")
+    }
+    head_keys.update(classifier_keys)
+
+    backbone_state = {key: value for key, value in state_dict.items() if key not in head_keys}
+    head_state = {key: value for key, value in state_dict.items() if key in head_keys}
+    return backbone_state, head_state, classifier_keys
+
+
+def freeze_feather_backbone(model: nn.Module, num_classes: Optional[int] = None) -> Tuple[int, int]:
+    """Freeze FEATHER backbone parameters while retaining the classification head."""
+    try:
+        classifier_keys = set(get_feather_classifier_state_keys(model, int(num_classes)))
+        classifier_root = next(iter(classifier_keys)).rsplit(".", 1)[0]
+        is_head = lambda name: name == classifier_root or name.startswith(f"{classifier_root}.")
+    except (RuntimeError, TypeError):
+        is_head = lambda name: any(token in name.lower() for token in HEAD_NAME_TOKENS)
+
     frozen, trainable = 0, 0
     for name, param in model.named_parameters():
-        keep_trainable = any(token in name.lower() for token in head_tokens)
+        keep_trainable = is_head(name)
         param.requires_grad = keep_trainable
         if keep_trainable:
             trainable += param.numel()
@@ -221,8 +286,16 @@ class FeatherMILWrapper(nn.Module):
                 except TypeError as exc:
                     raise TypeError(f"FEATHER output dict has no tensor values: {output.keys()}") from exc
         elif isinstance(output, (tuple, list)):
-            tensors = [value for value in output if isinstance(value, torch.Tensor)]
-            logits = self._choose_tensor(tensors)
+            errors = []
+            for value in output:
+                try:
+                    return self._extract_logits(value)
+                except (TypeError, RuntimeError) as exc:
+                    errors.append(f"{type(exc).__name__}: {exc}")
+            raise TypeError(
+                "FEATHER output tuple/list has no usable logits. "
+                + " | ".join(errors)
+            )
         else:
             raise TypeError(f"Unsupported FEATHER output type: {type(output).__name__}")
 

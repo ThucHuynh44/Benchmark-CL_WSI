@@ -5,6 +5,7 @@ TASK-IL evaluation for FEATHER per-task checkpoints.
 import argparse
 import os
 import sys
+import warnings
 from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -25,18 +26,33 @@ from mergeslide.feather_models import (
     create_feather_model,
     prepare_hf_token_env,
     sample_patch_bag,
+    split_feather_state_dict,
 )
 from mergeslide.utils import get_eval_metrics, seed_torch
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATHER_CONFIG = REPO_ROOT / "configs" / "feather.yaml"
+FEATHER_MERGE_CONFIG = REPO_ROOT / "configs" / "merge_feather.yaml"
+FEATHER_EVAL_CONFIG = REPO_ROOT / "configs" / "eval_feather.yaml"
 
 
 def _load_feather_cfg() -> dict:
     with open(FEATHER_CONFIG, "r") as handle:
         raw = yaml.safe_load(handle) or {}
     return raw.get("feather", {})
+
+
+def _load_merge_cfg() -> dict:
+    with open(FEATHER_MERGE_CONFIG, "r") as handle:
+        raw = yaml.safe_load(handle) or {}
+    return raw.get("feather_merging", {})
+
+
+def _load_eval_cfg() -> dict:
+    with open(FEATHER_EVAL_CONFIG, "r") as handle:
+        raw = yaml.safe_load(handle) or {}
+    return raw.get("feather_evaluation", {})
 
 
 def _torch_load(path, map_location):
@@ -82,6 +98,7 @@ def evaluate(test_loader, model, num_classes: int, device: torch.device, k: int,
 def _load_model_from_checkpoint(
     checkpoint_path: str,
     *,
+    merged_backbone_path: str,
     model_name: str,
     num_classes: int,
     device: torch.device,
@@ -101,10 +118,24 @@ def _load_model_from_checkpoint(
         num_classes=num_classes,
         from_pretrained=from_pretrained_arch,
     )
-    missing, unexpected = base_model.load_state_dict(state_dict, strict=False)
-    if missing or unexpected:
+    merged_backbone = _torch_load(merged_backbone_path, map_location="cpu")
+    missing, unexpected = base_model.load_state_dict(merged_backbone, strict=False)
+    if unexpected:
         print(
-            f"[FEATHER] checkpoint={checkpoint_path} load_state_dict "
+            f"[FEATHER] merged_backbone={merged_backbone_path} load_state_dict "
+            f"missing={len(missing)} unexpected={len(unexpected)}"
+        )
+
+    if isinstance(checkpoint, dict) and "head_state_dict" in checkpoint:
+        head_state = checkpoint["head_state_dict"]
+    else:
+        backbone_state, _, _ = split_feather_state_dict(base_model, num_classes=num_classes)
+        head_keys = set(base_model.state_dict()) - set(backbone_state)
+        head_state = {key: value for key, value in state_dict.items() if key in head_keys}
+    missing, unexpected = base_model.load_state_dict(head_state, strict=False)
+    if unexpected:
+        print(
+            f"[FEATHER] task_head={checkpoint_path} load_state_dict "
             f"missing={len(missing)} unexpected={len(unexpected)}"
         )
     model = FeatherMILWrapper(base_model, num_classes=num_classes).to(device)
@@ -118,8 +149,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="TASK-IL evaluation for FEATHER")
     parser.add_argument("--model_name", type=str, default=None)
     parser.add_argument("--save_dir", type=str, default=None)
+    parser.add_argument("--merge_model_path", type=str, default=None)
     parser.add_argument("--output_csv", type=str, default=None)
     parser.add_argument("--num_folds", type=int, default=None)
+    parser.add_argument("--num_tasks", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--k", type=int, default=None)
     parser.add_argument("--patch_size", type=int, default=None)
@@ -129,31 +162,77 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--from_pretrained_arch", action="store_true",
                         help="Initialize from pretrained FEATHER before loading checkpoint weights.")
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--disable_wandb", action="store_true")
     args = parser.parse_args()
 
     feather_cfg = _load_feather_cfg()
+    merge_cfg = _load_merge_cfg()
+    eval_cfg = _load_eval_cfg()
     model_name = str(args.model_name or feather_cfg.get("model_name", DEFAULT_FEATHER_MODEL_NAME))
-    save_dir = str(args.save_dir or feather_cfg.get("save_dir", "./checkpoints/feather_finetuned"))
-    num_folds = int(args.num_folds if args.num_folds is not None else feather_cfg.get("num_folds", 10))
-    num_workers = int(args.num_workers if args.num_workers is not None else feather_cfg.get("num_workers", 0))
-    k = int(args.k if args.k is not None else feather_cfg.get("k", 400))
-    patch_size = int(args.patch_size if args.patch_size is not None else feather_cfg.get("patch_size", 512))
-    output_csv = args.output_csv
+    save_dir = str(
+        args.save_dir or eval_cfg.get("save_dir", feather_cfg.get("save_dir", "./checkpoints/feather_finetuned"))
+    )
+    merge_model_path = str(
+        args.merge_model_path
+        or eval_cfg.get("merge_model_path")
+        or merge_cfg.get("des_merged_checkpoints", "./checkpoints/feather_merged")
+    )
+    num_folds = int(args.num_folds if args.num_folds is not None else eval_cfg.get("num_folds", 10))
+    num_workers = int(args.num_workers if args.num_workers is not None else eval_cfg.get("num_workers", 0))
+    k = int(args.k if args.k is not None else eval_cfg.get("k", feather_cfg.get("k", 400)))
+    patch_size = int(args.patch_size if args.patch_size is not None else eval_cfg.get("patch_size", feather_cfg.get("patch_size", 256)))
+    output_csv = args.output_csv or eval_cfg.get("taskil_output_csv")
     fold_end = int(args.fold_end if args.fold_end is not None else num_folds)
+    use_wandb = (args.use_wandb or eval_cfg.get("use_wandb", False)) and not args.disable_wandb
+    if use_wandb:
+        try:
+            import wandb  # noqa: F401
+        except ImportError:
+            warnings.warn("wandb package not found. Disabling wandb tracking.")
+            use_wandb = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed_torch(device, args.seed)
-    prepare_hf_token_env()
+    prepare_hf_token_env(feather_cfg.get("hf_token"))
 
     seq_dataset = Sequential_Generic_MIL_Dataset(config_path=str(FEATHER_CONFIG))
-    num_classes = seq_dataset.num_classes
-    task_ids = [args.only_task] if args.only_task is not None else list(range(len(num_classes)))
+    num_tasks = int(args.num_tasks if args.num_tasks is not None else eval_cfg.get("num_tasks", len(seq_dataset.num_classes)))
+    num_classes = seq_dataset.num_classes[:num_tasks]
+    task_ids = [args.only_task] if args.only_task is not None else list(range(num_tasks))
 
     fold_summaries = []
     task_rows = []
     for fold_id in tqdm(range(args.fold_start, fold_end)):
         all_baccs, all_accs = [], []
         fold = f"fold_{fold_id}"
+        if use_wandb:
+            import wandb
+            wandb.init(
+                project=eval_cfg.get("wandb_project", "MergeSlide-FEATHER"),
+                entity=eval_cfg.get("wandb_entity"),
+                group="feather_eval_taskil",
+                job_type="eval_taskil",
+                name=f"feather_taskil_{fold}",
+                config={
+                    "fold": fold_id,
+                    "model_name": model_name,
+                    "num_tasks": num_tasks,
+                    "k": k,
+                    "patch_size": patch_size,
+                },
+                reinit=True,
+            )
+        if os.path.isdir(merge_model_path):
+            merged_backbone_path = os.path.join(
+                merge_model_path,
+                f"_{fold}",
+                f"merged_backbone_feather_opcm_{fold}_task_{num_tasks - 1}.pth",
+            )
+        else:
+            merged_backbone_path = merge_model_path
+        if not os.path.exists(merged_backbone_path):
+            raise FileNotFoundError(f"Missing merged FEATHER backbone: {merged_backbone_path}")
         for task_id in task_ids:
             checkpoint_path = os.path.join(save_dir, fold, f"feather_task_{task_id}.pt")
             if not os.path.exists(checkpoint_path):
@@ -166,6 +245,7 @@ def main() -> None:
             )
             model = _load_model_from_checkpoint(
                 checkpoint_path,
+                merged_backbone_path=merged_backbone_path,
                 model_name=model_name,
                 num_classes=num_classes[task_id],
                 device=device,
@@ -196,6 +276,12 @@ def main() -> None:
                 "auroc": metrics.get("/auroc", np.nan),
             })
             task_rows.append(row)
+            if use_wandb:
+                import wandb
+                wandb.log({
+                    "eval/task_id": task_id,
+                    **{f"eval/task_{task_id}{key}": value for key, value in metrics.items()},
+                })
 
         fold_summary = {
             "fold": fold_id,
@@ -208,6 +294,13 @@ def main() -> None:
             f"[FEATHER] fold={fold_id} overall_acc={fold_summary['acc']:.4f} "
             f"overall_bacc={fold_summary['bacc']:.4f}"
         )
+        if use_wandb:
+            import wandb
+            wandb.log({
+                "eval/overall_acc": fold_summary["acc"],
+                "eval/overall_bacc": fold_summary["bacc"],
+            })
+            wandb.finish()
 
     if output_csv:
         rows = task_rows + fold_summaries

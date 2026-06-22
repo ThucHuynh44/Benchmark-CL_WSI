@@ -16,6 +16,7 @@ os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 import argparse
 import csv
 import time
+import warnings
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -96,6 +97,7 @@ def train_one_task(
     lr_scheduler,
     device: torch.device,
     k: int,
+    use_wandb: bool = False,
 ) -> Dict[str, float]:
     step = 0
     last_stats: Dict[str, float] = {}
@@ -118,6 +120,15 @@ def train_one_task(
             f"task {task_id} epoch {epoch}: loss={avg_loss:.4f} "
             f"proj_rate={proj_rate:.3f} buffer={int(last_stats.get('buffer_size', 0))}"
         )
+        if use_wandb:
+            import wandb
+            wandb.log({
+                "train/task_id": task_id,
+                "train/epoch": epoch,
+                "train/avg_loss": avg_loss,
+                "train/projection_rate": proj_rate,
+                **{f"train/{key}": value for key, value in last_stats.items()},
+            })
     return last_stats
 
 
@@ -290,6 +301,8 @@ def main():
     parser.add_argument("--freeze_backbone", action="store_true")
     parser.add_argument("--no_eval_after_task", action="store_true")
     parser.add_argument("--no_mask_unseen_eval", action="store_true")
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--disable_wandb", action="store_true")
     args = parser.parse_args()
 
     cfg = load_config(default_filename="agem.yaml")
@@ -309,6 +322,13 @@ def main():
     freeze_backbone = bool(args.freeze_backbone or agem_cfg.get("freeze_backbone", False))
     eval_after_task = bool((not args.no_eval_after_task) and agem_cfg.get("eval_after_task", True))
     mask_unseen_eval = bool((not args.no_mask_unseen_eval) and agem_cfg.get("mask_unseen_eval", True))
+    use_wandb = (args.use_wandb or agem_cfg.get("use_wandb", False)) and not args.disable_wandb
+    if use_wandb:
+        try:
+            import wandb  # noqa: F401
+        except ImportError:
+            warnings.warn("wandb package not found. Disabling wandb tracking.")
+            use_wandb = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed_torch(device, seed)
@@ -344,6 +364,17 @@ def main():
     for fold_id in tqdm(range(num_folds), desc="folds"):
         fold_dir = os.path.join(save_dir, f"fold_{fold_id}")
         os.makedirs(fold_dir, exist_ok=True)
+        if use_wandb:
+            import wandb
+            wandb.init(
+                project=agem_cfg.get("wandb_project", "MergeSlide-AGEM"),
+                entity=agem_cfg.get("wandb_entity"),
+                group="agem_train",
+                job_type="train",
+                name=f"agem_fold_{fold_id}",
+                config={**run_args, "fold": fold_id},
+                reinit=True,
+            )
 
         base_model = AutoModel.from_pretrained("MahmoodLab/TITAN", trust_remote_code=True).to(device)
         model = TitanGlobalClassifier(base_model, total_classes).to(device)
@@ -380,6 +411,7 @@ def main():
                 lr_scheduler=scheduler,
                 device=device,
                 k=k,
+                use_wandb=use_wandb,
             )
             memory_samples = _memory_samples_for_task(buffer_size, num_tasks, task_id)
             added_to_buffer = trainer.end_task(
@@ -425,9 +457,20 @@ def main():
                         f"eval fold={fold_id} after_task={task_id} task={eval_task_id}: "
                         f"acc={metrics['acc']:.4f} bacc={metrics['bacc']:.4f}"
                     )
+                    if use_wandb:
+                        import wandb
+                        wandb.log({
+                            "eval/after_task": task_id,
+                            "eval/task_id": eval_task_id,
+                            **{f"eval/{key}": value for key, value in metrics.items()},
+                        })
 
         final_path = os.path.join(fold_dir, "agem_titan_final.pt")
         save_checkpoint(final_path, model, trainer, fold_id, num_tasks - 1, num_classes, run_args)
+        if use_wandb:
+            import wandb
+            wandb.log({"train/final_buffer_size": len(trainer.buffer)})
+            wandb.finish()
 
     if eval_rows:
         eval_csv = os.path.join(save_dir, "agem_titan_eval.csv")

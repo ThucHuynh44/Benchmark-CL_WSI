@@ -16,3 +16,5 @@ derpp:
   freeze_backbone: false
   eval_after_task: true
   mask_unseen_eval: true
+  use_wandb: true
+  wandb_project: "MergeSlide-DERPP"

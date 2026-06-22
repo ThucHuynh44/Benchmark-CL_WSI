@@ -16,6 +16,7 @@ os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 import argparse
 import csv
 import time
+import warnings
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -90,6 +91,7 @@ def train_one_task(
     lr_scheduler,
     device: torch.device,
     k: int,
+    use_wandb: bool = False,
 ) -> Dict[str, float]:
     step = 0
     last_stats: Dict[str, float] = {}
@@ -109,6 +111,14 @@ def train_one_task(
             f"task {task_id} epoch {epoch}: loss={avg_loss:.4f} "
             f"buffer={int(last_stats.get('buffer_size', 0))}"
         )
+        if use_wandb:
+            import wandb
+            wandb.log({
+                "train/task_id": task_id,
+                "train/epoch": epoch,
+                "train/avg_loss": avg_loss,
+                **{f"train/{key}": value for key, value in last_stats.items()},
+            })
     return last_stats
 
 
@@ -283,6 +293,8 @@ def main():
     parser.add_argument("--freeze_backbone", action="store_true")
     parser.add_argument("--no_eval_after_task", action="store_true")
     parser.add_argument("--no_mask_unseen_eval", action="store_true")
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--disable_wandb", action="store_true")
     args = parser.parse_args()
 
     cfg = load_config(default_filename="derpp.yaml")
@@ -304,6 +316,13 @@ def main():
     freeze_backbone = bool(args.freeze_backbone or derpp_cfg.get("freeze_backbone", False))
     eval_after_task = bool((not args.no_eval_after_task) and derpp_cfg.get("eval_after_task", True))
     mask_unseen_eval = bool((not args.no_mask_unseen_eval) and derpp_cfg.get("mask_unseen_eval", True))
+    use_wandb = (args.use_wandb or derpp_cfg.get("use_wandb", False)) and not args.disable_wandb
+    if use_wandb:
+        try:
+            import wandb  # noqa: F401
+        except ImportError:
+            warnings.warn("wandb package not found. Disabling wandb tracking.")
+            use_wandb = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed_torch(device, seed)
@@ -341,6 +360,17 @@ def main():
     for fold_id in tqdm(range(num_folds), desc="folds"):
         fold_dir = os.path.join(save_dir, f"fold_{fold_id}")
         os.makedirs(fold_dir, exist_ok=True)
+        if use_wandb:
+            import wandb
+            wandb.init(
+                project=derpp_cfg.get("wandb_project", "MergeSlide-DERPP"),
+                entity=derpp_cfg.get("wandb_entity"),
+                group="derpp_train",
+                job_type="train",
+                name=f"derpp_fold_{fold_id}",
+                config={**run_args, "fold": fold_id},
+                reinit=True,
+            )
 
         base_model = AutoModel.from_pretrained("MahmoodLab/TITAN", trust_remote_code=True).to(device)
         model = TitanGlobalClassifier(base_model, total_classes).to(device)
@@ -379,6 +409,7 @@ def main():
                 lr_scheduler=scheduler,
                 device=device,
                 k=k,
+                use_wandb=use_wandb,
             )
             elapsed = time.time() - start
             print(f"Fold {fold_id}, task {task_id}: DER++ training took {elapsed:.1f}s")
@@ -413,9 +444,20 @@ def main():
                         f"eval fold={fold_id} after_task={task_id} task={eval_task_id}: "
                         f"acc={metrics['acc']:.4f} bacc={metrics['bacc']:.4f}"
                     )
+                    if use_wandb:
+                        import wandb
+                        wandb.log({
+                            "eval/after_task": task_id,
+                            "eval/task_id": eval_task_id,
+                            **{f"eval/{key}": value for key, value in metrics.items()},
+                        })
 
         final_path = os.path.join(fold_dir, "derpp_titan_final.pt")
         save_checkpoint(final_path, model, trainer, fold_id, num_tasks - 1, num_classes, run_args)
+        if use_wandb:
+            import wandb
+            wandb.log({"train/final_buffer_size": len(trainer.buffer)})
+            wandb.finish()
 
     if eval_rows:
         eval_csv = os.path.join(save_dir, "derpp_titan_eval.csv")

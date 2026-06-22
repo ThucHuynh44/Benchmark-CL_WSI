@@ -1,0 +1,52 @@
+# FEATHER continual-learning baselines. Common model/HF/W&B settings are read
+# from configs/feather.yaml.
+derpp:
+  num_epochs: 10
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  buffer_size: 30
+  alpha: 0.2
+  beta: 0.2
+  save_dir: "./checkpoints/feather_derpp_buffer30_fullpatch"
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 4
+  # 0 uses the complete WSI feature bag; a positive value samples up to k patches.
+  k: 0
+  seed: 0
+  freeze_backbone: false
+  eval_after_task: true
+  mask_unseen_eval: true
+
+agem:
+  num_epochs: 10
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  buffer_size: 30
+  save_dir: "./checkpoints/feather_agem_buffer30_fullpatch"
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 4
+  # 0 uses the complete WSI feature bag; a positive value samples up to k patches.
+  k: 0
+  seed: 0
+  freeze_backbone: false
+  eval_after_task: true
+  mask_unseen_eval: true
+
+er_ace:
+  num_epochs: 10
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  buffer_size: 30
+  save_dir: "./checkpoints/feather_er_ace_buffer30_fullpatch"
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 4
+  # 0 uses the complete WSI feature bag; a positive value samples up to k patches.
+  k: 0
+  seed: 0
+  freeze_backbone: false
+  task_free: false
+  eval_after_task: true
+  mask_unseen_eval: true

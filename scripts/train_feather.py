@@ -18,10 +18,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
+from typing import Optional
 from sklearn.metrics import balanced_accuracy_score
 from tqdm import tqdm
 
 from mergeslide.datasets import Sequential_Generic_MIL_Dataset
+from mergeslide.models import EarlyStopping
 from mergeslide.feather_models import (
     DEFAULT_FEATHER_MODEL_NAME,
     FeatherMILWrapper,
@@ -29,6 +31,7 @@ from mergeslide.feather_models import (
     freeze_feather_backbone,
     prepare_hf_token_env,
     sample_patch_bag,
+    split_feather_state_dict,
 )
 from mergeslide.utils import seed_torch
 
@@ -113,12 +116,14 @@ def train_one_task(
     patch_size: int,
     use_wandb: bool = False,
     debug_batches: bool = False,
+    patience: Optional[int] = None,
 ):
     optimizer = _build_optimizer(model, lr=lr, weight_decay=weight_decay)
     loss_fn = nn.CrossEntropyLoss()
     amp_enabled = device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
     patch_size_tensor = torch.tensor(patch_size, dtype=torch.int32, device=device)
+    early_stopping = EarlyStopping(patience=patience, verbose=True) if patience is not None and patience > 0 else None
 
     for epoch in range(num_epochs):
         model.train()
@@ -184,6 +189,15 @@ def train_one_task(
                 "val/acc": val_metrics["acc"],
             })
 
+        if early_stopping is not None:
+            early_stopping(val_metrics["loss"], model)
+            if early_stopping.early_stop:
+                tqdm.write("Early stopping triggered")
+                break
+
+    if early_stopping is not None and early_stopping.best_model_weights is not None:
+        model.load_state_dict(early_stopping.best_model_weights)
+
     model.eval()
     return model
 
@@ -209,6 +223,7 @@ def main() -> None:
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--disable_wandb", action="store_true")
     parser.add_argument("--debug_batches", action="store_true")
+    parser.add_argument("--patience", type=int, default=None)
     args = parser.parse_args()
 
     feather_cfg = _load_feather_cfg()
@@ -224,6 +239,8 @@ def main() -> None:
     from_pretrained = bool(feather_cfg.get("from_pretrained", True)) and not args.no_pretrained
     freeze_backbone = bool(args.freeze_backbone or feather_cfg.get("freeze_backbone", False))
     use_wandb = (args.use_wandb or feather_cfg.get("use_wandb", False)) and not args.disable_wandb
+    patience_val = _cfg_value(args, feather_cfg, "patience", None)
+    patience = int(patience_val) if patience_val is not None else None
 
     if use_wandb:
         try:
@@ -234,7 +251,7 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed_torch(device, args.seed)
-    prepare_hf_token_env()
+    prepare_hf_token_env(feather_cfg.get("hf_token"))
 
     seq_dataset = Sequential_Generic_MIL_Dataset(config_path=str(FEATHER_CONFIG))
     num_classes = seq_dataset.num_classes
@@ -256,6 +273,7 @@ def main() -> None:
                 import wandb
                 wandb.init(
                     project=feather_cfg.get("wandb_project", "MergeSlide-FEATHER"),
+                    entity=feather_cfg.get("wandb_entity"),
                     name=f"feather_fold_{fold_id}_task_{task_id}",
                     config={
                         "fold": fold_id,
@@ -280,7 +298,10 @@ def main() -> None:
                 from_pretrained=from_pretrained,
             )
             if freeze_backbone:
-                frozen, trainable = freeze_feather_backbone(base_model)
+                frozen, trainable = freeze_feather_backbone(
+                    base_model,
+                    num_classes=num_classes[task_id],
+                )
                 print(f"[FEATHER] freeze_backbone frozen_params={frozen} trainable_params={trainable}")
             model = FeatherMILWrapper(base_model, num_classes=num_classes[task_id]).to(device)
 
@@ -298,13 +319,21 @@ def main() -> None:
                 patch_size=patch_size,
                 use_wandb=use_wandb,
                 debug_batches=args.debug_batches,
+                patience=patience,
             )
             print(f"[FEATHER] fold={fold_id} task={task_id} training took {time.time() - start:.1f}s")
 
             ckpt_path = os.path.join(fold_dir, f"feather_task_{task_id}.pt")
+            backbone_state, head_state, classifier_keys = split_feather_state_dict(
+                model.model,
+                num_classes=num_classes[task_id],
+            )
             torch.save(
                 {
                     "model_state_dict": model.model.state_dict(),
+                    "backbone_state_dict": backbone_state,
+                    "head_state_dict": head_state,
+                    "classifier_state_keys": classifier_keys,
                     "model_name": model_name,
                     "num_classes": num_classes[task_id],
                     "task_id": task_id,
