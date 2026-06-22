@@ -106,6 +106,7 @@ def _build_global_model(
     merged_backbone_path: str,
     device: torch.device,
     from_pretrained_arch: bool,
+    calibrated_head_path: str = None,
 ) -> FeatherMILWrapper:
     total_classes = sum(num_classes_per_task)
     base_model = create_feather_model(
@@ -119,6 +120,23 @@ def _build_global_model(
         raise KeyError(f"Merged FEATHER backbone has unexpected keys: {unexpected[:5]}")
 
     _, _, global_classifier_keys = split_feather_state_dict(base_model, num_classes=total_classes)
+    if calibrated_head_path is not None:
+        calibrated_checkpoint = _torch_load(calibrated_head_path)
+        calibrated_head = calibrated_checkpoint.get("classifier_state_dict", calibrated_checkpoint)
+        calibrated_keys = tuple(calibrated_checkpoint.get("classifier_state_keys", global_classifier_keys))
+        if calibrated_keys != global_classifier_keys:
+            raise ValueError(
+                "Calibrated FEATHER classifier keys differ from the current global classifier: "
+                f"{calibrated_keys} != {global_classifier_keys}"
+            )
+        missing = [key for key in global_classifier_keys if key not in calibrated_head]
+        if missing:
+            raise KeyError(f"Calibrated FEATHER classifier is missing keys: {missing}")
+        _, unexpected = base_model.load_state_dict(calibrated_head, strict=False)
+        if unexpected:
+            raise KeyError(f"Calibrated FEATHER classifier has unexpected keys: {unexpected[:5]}")
+        return FeatherMILWrapper(base_model, num_classes=total_classes).to(device)
+
     global_head_state = {}
     task_classifier_states = []
     reference_keys = None
@@ -244,6 +262,8 @@ def main() -> None:
     parser.add_argument("--fold_end", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--from_pretrained_arch", action="store_true")
+    parser.add_argument("--head_mode", choices=("concat", "calibrated"), default=None)
+    parser.add_argument("--calibration_dir", type=str, default=None)
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--disable_wandb", action="store_true")
     args = parser.parse_args()
@@ -265,6 +285,11 @@ def main() -> None:
     k = int(args.k if args.k is not None else eval_cfg.get("k", feather_cfg.get("k", 400)))
     patch_size = int(args.patch_size if args.patch_size is not None else eval_cfg.get("patch_size", feather_cfg.get("patch_size", 256)))
     output_csv = args.output_csv or eval_cfg.get("classil_output_csv")
+    head_mode = str(args.head_mode or eval_cfg.get("classil_head_mode", "concat"))
+    calibration_dir = str(
+        args.calibration_dir
+        or eval_cfg.get("classil_calibration_dir", "./checkpoints/feather_classil_calibrated")
+    )
     fold_end = int(args.fold_end if args.fold_end is not None else num_folds)
     use_wandb = (args.use_wandb or eval_cfg.get("use_wandb", False)) and not args.disable_wandb
     if use_wandb:
@@ -301,7 +326,7 @@ def main() -> None:
                     "num_tasks": num_tasks,
                     "k": k,
                     "patch_size": patch_size,
-                    "mode": "naive",
+                    "mode": head_mode,
                 },
                 reinit=True,
             )
@@ -320,6 +345,18 @@ def main() -> None:
             os.path.join(save_dir, fold, f"feather_task_{task_id}.pt")
             for task_id in range(num_tasks)
         ]
+        calibrated_head_path = None
+        if head_mode == "calibrated":
+            calibrated_head_path = os.path.join(
+                calibration_dir,
+                fold,
+                f"feather_global_classifier_{fold}.pt",
+            )
+            if not os.path.exists(calibrated_head_path):
+                raise FileNotFoundError(
+                    "Missing calibrated FEATHER global classifier: "
+                    f"{calibrated_head_path}. Run scripts/calibrate_feather_classil.py first."
+                )
         model = _build_global_model(
             model_name=model_name,
             num_classes_per_task=num_classes,
@@ -327,6 +364,7 @@ def main() -> None:
             merged_backbone_path=merged_backbone_path,
             device=device,
             from_pretrained_arch=args.from_pretrained_arch,
+            calibrated_head_path=calibrated_head_path,
         )
 
         fold_accs, fold_baccs = [], []

@@ -65,6 +65,14 @@ the per-task classifier heads:
 python scripts/eval_feather_classil.py --num_folds 1
 ```
 
+For calibrated CLASS-IL, fit a global classifier on train/validation splits
+without using test slides, then evaluate with that classifier:
+
+```bash
+python scripts/calibrate_feather_classil.py --num_folds 1
+python scripts/eval_feather_classil.py --num_folds 1 --head_mode calibrated
+```
+
 FEATHER intentionally has no TCP task routing because TCP depends on TITAN's
 text-prompt embeddings.
 
