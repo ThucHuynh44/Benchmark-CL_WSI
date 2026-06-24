@@ -1,0 +1,324 @@
+"""
+TASK-IL evaluation for FEATHER per-task checkpoints.
+"""
+
+import argparse
+import os
+import sys
+import warnings
+from pathlib import Path
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+import yaml
+from sklearn.metrics import balanced_accuracy_score
+from tqdm import tqdm
+
+from mergeslide.datasets import Sequential_Generic_MIL_Dataset
+from mergeslide.feather_models import (
+    DEFAULT_FEATHER_MODEL_NAME,
+    FeatherMILWrapper,
+    create_feather_model,
+    prepare_hf_token_env,
+    sample_patch_bag,
+    split_feather_state_dict,
+)
+from mergeslide.utils import get_eval_metrics, seed_torch
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+FEATHER_CONFIG = REPO_ROOT / "configs" / "feather.yaml"
+FEATHER_MERGE_CONFIG = REPO_ROOT / "configs" / "merge_feather.yaml"
+FEATHER_EVAL_CONFIG = REPO_ROOT / "configs" / "eval_feather.yaml"
+
+
+def _load_feather_cfg() -> dict:
+    with open(FEATHER_CONFIG, "r") as handle:
+        raw = yaml.safe_load(handle) or {}
+    return raw.get("feather", {})
+
+
+def _load_merge_cfg() -> dict:
+    with open(FEATHER_MERGE_CONFIG, "r") as handle:
+        raw = yaml.safe_load(handle) or {}
+    return raw.get("feather_merging", {})
+
+
+def _load_eval_cfg() -> dict:
+    with open(FEATHER_EVAL_CONFIG, "r") as handle:
+        raw = yaml.safe_load(handle) or {}
+    return raw.get("feather_evaluation", {})
+
+
+def _torch_load(path, map_location):
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except TypeError:
+        return torch.load(path, map_location=map_location)
+
+
+def evaluate(test_loader, model, num_classes: int, device: torch.device, k: int, patch_size: int):
+    model.eval()
+    preds_all, probs_all, targets_all = [], [], []
+    patch_size_tensor = torch.tensor(patch_size, dtype=torch.int32, device=device)
+    amp_enabled = device.type == "cuda"
+
+    with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=amp_enabled):
+        for features, coords, labels in tqdm(test_loader, leave=False):
+            features, coords = sample_patch_bag(features, coords, k)
+            features = features.to(device, non_blocking=True)
+            coords = coords.long().to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
+            logits = model(features, coords, patch_size_tensor).float()
+
+            preds = logits.argmax(1)
+            if num_classes == 2:
+                probs = nn.functional.softmax(logits, dim=1)[:, 1]
+                roc_kwargs = {}
+            else:
+                probs = nn.functional.softmax(logits, dim=1)
+                roc_kwargs = {"multi_class": "ovo", "average": "macro"}
+
+            preds_all.append(preds.cpu().numpy())
+            probs_all.append(probs.cpu().numpy())
+            targets_all.append(labels.cpu().numpy())
+
+    preds_all = np.concatenate(preds_all)
+    probs_all = np.concatenate(probs_all)
+    targets_all = np.concatenate(targets_all)
+    metrics = get_eval_metrics(targets_all, preds_all, probs_all, roc_kwargs=roc_kwargs)
+    return metrics, preds_all, targets_all
+
+
+def _load_model_from_checkpoint(
+    checkpoint_path: str,
+    *,
+    merged_backbone_path: str,
+    model_name: str,
+    num_classes: int,
+    device: torch.device,
+    from_pretrained_arch: bool,
+) -> FeatherMILWrapper:
+    checkpoint = _torch_load(checkpoint_path, map_location="cpu")
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+        ckpt_model_name = checkpoint.get("model_name")
+        if ckpt_model_name:
+            model_name = ckpt_model_name
+    else:
+        state_dict = checkpoint
+
+    base_model = create_feather_model(
+        model_name,
+        num_classes=num_classes,
+        from_pretrained=from_pretrained_arch,
+    )
+    merged_backbone = _torch_load(merged_backbone_path, map_location="cpu")
+    missing, unexpected = base_model.load_state_dict(merged_backbone, strict=False)
+    if unexpected:
+        print(
+            f"[FEATHER] merged_backbone={merged_backbone_path} load_state_dict "
+            f"missing={len(missing)} unexpected={len(unexpected)}"
+        )
+
+    if isinstance(checkpoint, dict) and "head_state_dict" in checkpoint:
+        head_state = checkpoint["head_state_dict"]
+    else:
+        backbone_state, _, _ = split_feather_state_dict(base_model, num_classes=num_classes)
+        head_keys = set(base_model.state_dict()) - set(backbone_state)
+        head_state = {key: value for key, value in state_dict.items() if key in head_keys}
+    missing, unexpected = base_model.load_state_dict(head_state, strict=False)
+    if unexpected:
+        print(
+            f"[FEATHER] task_head={checkpoint_path} load_state_dict "
+            f"missing={len(missing)} unexpected={len(unexpected)}"
+        )
+    model = FeatherMILWrapper(base_model, num_classes=num_classes).to(device)
+    if isinstance(checkpoint, dict) and checkpoint.get("forward_mode"):
+        model._forward_mode = checkpoint["forward_mode"]
+    return model
+
+
+def main() -> None:
+    torch.multiprocessing.set_sharing_strategy("file_system")
+    parser = argparse.ArgumentParser(description="TASK-IL evaluation for FEATHER")
+    parser.add_argument("--model_name", type=str, default=None)
+    parser.add_argument("--save_dir", type=str, default=None)
+    parser.add_argument("--merge_model_path", type=str, default=None)
+    parser.add_argument("--output_csv", type=str, default=None)
+    parser.add_argument("--num_folds", type=int, default=None)
+    parser.add_argument("--num_tasks", type=int, default=None)
+    parser.add_argument("--num_workers", type=int, default=None)
+    parser.add_argument("--k", type=int, default=None)
+    parser.add_argument("--patch_size", type=int, default=None)
+    parser.add_argument("--fold_start", type=int, default=0)
+    parser.add_argument("--fold_end", type=int, default=None)
+    parser.add_argument("--only_task", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--from_pretrained_arch", action="store_true",
+                        help="Initialize from pretrained FEATHER before loading checkpoint weights.")
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--disable_wandb", action="store_true")
+    args = parser.parse_args()
+
+    feather_cfg = _load_feather_cfg()
+    merge_cfg = _load_merge_cfg()
+    eval_cfg = _load_eval_cfg()
+    model_name = str(args.model_name or feather_cfg.get("model_name", DEFAULT_FEATHER_MODEL_NAME))
+    save_dir = str(
+        args.save_dir or eval_cfg.get("save_dir", feather_cfg.get("save_dir", "./checkpoints/feather_finetuned"))
+    )
+    merge_model_path = str(
+        args.merge_model_path
+        or eval_cfg.get("merge_model_path")
+        or merge_cfg.get("des_merged_checkpoints", "./checkpoints/feather_merged")
+    )
+    num_folds = int(args.num_folds if args.num_folds is not None else eval_cfg.get("num_folds", 10))
+    num_workers = int(args.num_workers if args.num_workers is not None else eval_cfg.get("num_workers", 0))
+    k = int(args.k if args.k is not None else eval_cfg.get("k", feather_cfg.get("k", 400)))
+    patch_size = int(args.patch_size if args.patch_size is not None else eval_cfg.get("patch_size", feather_cfg.get("patch_size", 256)))
+    output_csv = args.output_csv or eval_cfg.get("taskil_output_csv")
+    fold_end = int(args.fold_end if args.fold_end is not None else num_folds)
+    use_wandb = (args.use_wandb or eval_cfg.get("use_wandb", False)) and not args.disable_wandb
+    if use_wandb:
+        try:
+            import wandb  # noqa: F401
+        except ImportError:
+            warnings.warn("wandb package not found. Disabling wandb tracking.")
+            use_wandb = False
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    seed_torch(device, args.seed)
+    prepare_hf_token_env(feather_cfg.get("hf_token"))
+
+    seq_dataset = Sequential_Generic_MIL_Dataset(config_path=str(FEATHER_CONFIG))
+    num_tasks = int(args.num_tasks if args.num_tasks is not None else eval_cfg.get("num_tasks", len(seq_dataset.num_classes)))
+    num_classes = seq_dataset.num_classes[:num_tasks]
+    task_ids = [args.only_task] if args.only_task is not None else list(range(num_tasks))
+
+    fold_summaries = []
+    task_rows = []
+    for fold_id in tqdm(range(args.fold_start, fold_end)):
+        all_baccs, all_accs = [], []
+        fold = f"fold_{fold_id}"
+        if use_wandb:
+            import wandb
+            wandb.init(
+                project=eval_cfg.get("wandb_project", "MergeSlide-FEATHER"),
+                entity=eval_cfg.get("wandb_entity"),
+                group="feather_eval_taskil",
+                job_type="eval_taskil",
+                name=f"feather_taskil_{fold}",
+                config={
+                    "fold": fold_id,
+                    "model_name": model_name,
+                    "num_tasks": num_tasks,
+                    "k": k,
+                    "patch_size": patch_size,
+                },
+                reinit=True,
+            )
+        if os.path.isdir(merge_model_path):
+            merged_backbone_path = os.path.join(
+                merge_model_path,
+                f"_{fold}",
+                f"merged_backbone_feather_opcm_{fold}_task_{num_tasks - 1}.pth",
+            )
+        else:
+            merged_backbone_path = merge_model_path
+        if not os.path.exists(merged_backbone_path):
+            raise FileNotFoundError(f"Missing merged FEATHER backbone: {merged_backbone_path}")
+        for task_id in task_ids:
+            checkpoint_path = os.path.join(save_dir, fold, f"feather_task_{task_id}.pt")
+            if not os.path.exists(checkpoint_path):
+                raise FileNotFoundError(f"Missing FEATHER checkpoint: {checkpoint_path}")
+
+            _, _, test_loader = seq_dataset.get_data_loaders(
+                fold_id,
+                task_id,
+                num_workers=num_workers,
+            )
+            model = _load_model_from_checkpoint(
+                checkpoint_path,
+                merged_backbone_path=merged_backbone_path,
+                model_name=model_name,
+                num_classes=num_classes[task_id],
+                device=device,
+                from_pretrained_arch=args.from_pretrained_arch,
+            )
+            metrics, preds_all, targets_all = evaluate(
+                test_loader,
+                model,
+                num_classes=num_classes[task_id],
+                device=device,
+                k=k,
+                patch_size=patch_size,
+            )
+            acc = float((preds_all == targets_all).mean())
+            bacc = balanced_accuracy_score(targets_all, preds_all)
+            all_accs.append(acc)
+            all_baccs.append(bacc)
+            print(f"[FEATHER] fold={fold_id} task={task_id} metrics={metrics}")
+
+            row = {"fold": fold_id, "task": task_id}
+            row.update({
+                "acc": metrics.get("/acc", np.nan),
+                "bacc": metrics.get("/bacc", np.nan),
+                "kappa": metrics.get("/kappa", np.nan),
+                "nw_kappa": metrics.get("/nw_kappa", np.nan),
+                "weighted_f1": metrics.get("/weighted_f1", np.nan),
+                "loss": metrics.get("/loss", np.nan),
+                "auroc": metrics.get("/auroc", np.nan),
+            })
+            task_rows.append(row)
+            if use_wandb:
+                import wandb
+                wandb.log({
+                    "eval/task_id": task_id,
+                    **{f"eval/task_{task_id}{key}": value for key, value in metrics.items()},
+                })
+
+        fold_summary = {
+            "fold": fold_id,
+            "task": "overall",
+            "acc": float(np.mean(all_accs)),
+            "bacc": float(np.mean(all_baccs)),
+        }
+        fold_summaries.append(fold_summary)
+        print(
+            f"[FEATHER] fold={fold_id} overall_acc={fold_summary['acc']:.4f} "
+            f"overall_bacc={fold_summary['bacc']:.4f}"
+        )
+        if use_wandb:
+            import wandb
+            wandb.log({
+                "eval/overall_acc": fold_summary["acc"],
+                "eval/overall_bacc": fold_summary["bacc"],
+            })
+            wandb.finish()
+
+    if output_csv:
+        rows = task_rows + fold_summaries
+        rows.append({
+            "fold": "mean",
+            "task": "overall",
+            "acc": np.mean([row["acc"] for row in fold_summaries]),
+            "bacc": np.mean([row["bacc"] for row in fold_summaries]),
+        })
+        rows.append({
+            "fold": "std",
+            "task": "overall",
+            "acc": np.std([row["acc"] for row in fold_summaries]),
+            "bacc": np.std([row["bacc"] for row in fold_summaries]),
+        })
+        pd.DataFrame(rows).to_csv(output_csv, index=False)
+        print(f"[FEATHER] CSV saved: {output_csv}")
+
+
+if __name__ == "__main__":
+    main()

@@ -23,23 +23,17 @@ from tqdm import tqdm
 from transformers import AutoModel
 
 from configs.loader import load_config
-from mergeslide.datasets import Sequential_Generic_MIL_Dataset
+from mergeslide.datasets import Sequential_Generic_MIL_Dataset, get_dict_classes
 from mergeslide.models import CustomSequential, EarlyStopping, cosine_lr, create_mlp
 from mergeslide.prompts import ALL_TASK_PROMPTS, TEMPLATES
 from mergeslide.utils import get_eval_metrics, seed_torch
 
 # Patch sampling budget per forward pass
 K = 400
+PATCH_SIZE = 1024
 
-# Map task_id → column indices in the joint classifier matrix
-DICT_CLASSES = {
-    0: [0, 1],
-    1: [2, 4],
-    2: [5, 6],
-    3: [7, 8],
-    4: [9, 10],
-    5: [11, 12],
-}
+# DICT_CLASSES sẽ được tính động sau khi load seq_dataset
+# (tránh hardcode class ranges khi thêm/bớt task)
 
 
 def build_classifier(titan_model, device: str):
@@ -53,7 +47,28 @@ def build_classifier(titan_model, device: str):
     return classifier
 
 
-def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device, use_wandb=False, **kwargs):
+def sample_patch_bag(features: torch.Tensor, coords: torch.Tensor, k: int):
+    """Sample patches before moving the full WSI bag to GPU."""
+    if k is None or k <= 0 or features.shape[0] <= k:
+        return features, coords
+    indices = torch.randperm(features.shape[0])[:k]
+    return features[indices], coords[indices]
+
+
+def train(
+    train_loader,
+    val_loader,
+    model,
+    num_epochs,
+    lr,
+    weight_decay,
+    device,
+    use_wandb=False,
+    k: int = K,
+    patch_size: int = PATCH_SIZE,
+    debug_batches: bool = False,
+    **kwargs,
+):
     """Train model for one epoch with cosine LR and early stopping.
 
     Args:
@@ -86,8 +101,12 @@ def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device,
         steps=len(train_loader) * num_epochs,
     )
     loss_fn = nn.CrossEntropyLoss()
-    fp16_scaler = torch.cuda.amp.GradScaler()
+    device_obj = torch.device(device)
+    amp_enabled = device_obj.type == "cuda"
+    autocast_device = "cuda" if amp_enabled else "cpu"
+    fp16_scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
     early_stopping = EarlyStopping(patience=2, verbose=True)
+    patch_size_tensor = torch.tensor(patch_size, dtype=torch.int32, device=device_obj)
     step = 0
 
     for epoch in tqdm(range(num_epochs)):
@@ -95,17 +114,24 @@ def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device,
         preds_all, targets_all = [], []
         total_train_loss = 0.0
 
-        for features, coords, label in tqdm(train_loader):
-            scheduler(step)
-            features = features.to(device)
-            coords = coords.long().to(device)
-            indices = torch.randperm(features.shape[0])[:K]
-            features = features[indices]
-            coords = coords[indices]
+        train_iter = iter(train_loader)
+        for batch_idx in tqdm(range(len(train_loader))):
+            if debug_batches:
+                tqdm.write(f"[train] epoch={epoch} waiting batch={batch_idx + 1}/{len(train_loader)}")
+            fetch_start = time.time()
+            features, coords, label = next(train_iter)
+            fetch_time = time.time() - fetch_start
 
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                logits = model(features, coords, torch.tensor(1024).int().to(device))
-                loss = loss_fn(logits, label.to(device))
+            scheduler(step)
+            num_patches = features.shape[0]
+            features, coords = sample_patch_bag(features, coords, k)
+            features = features.to(device_obj, non_blocking=True)
+            coords = coords.long().to(device_obj, non_blocking=True)
+            label = label.to(device_obj, non_blocking=True)
+
+            with torch.amp.autocast(autocast_device, dtype=torch.bfloat16, enabled=amp_enabled):
+                logits = model(features, coords, patch_size_tensor)
+                loss = loss_fn(logits, label)
 
             fp16_scaler.scale(loss).backward()
             fp16_scaler.step(optimizer)
@@ -113,12 +139,17 @@ def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device,
             optimizer.zero_grad()
 
             preds_all.append(logits.argmax(1).cpu().numpy())
-            targets_all.append(label.numpy())
+            targets_all.append(label.cpu().numpy())
             if use_wandb and step % 10 == 0:
                 import wandb
                 wandb.log({"train/step_loss": loss.item(), "lr": optimizer.param_groups[0]['lr'], "step": step})
             step += 1
             total_train_loss += loss.item()
+            if debug_batches:
+                tqdm.write(
+                    f"[train] epoch={epoch} batch={batch_idx + 1}/{len(train_loader)} "
+                    f"fetch={fetch_time:.3f}s patches={num_patches}->{features.shape[0]} loss={loss.item():.4f}"
+                )
 
         avg_train_loss = total_train_loss / len(train_loader)
         bacc = balanced_accuracy_score(np.concatenate(targets_all), np.concatenate(preds_all))
@@ -126,20 +157,21 @@ def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device,
         if epoch > 1:
             model.eval()
             preds_val, targets_val, total_val_loss = [], [], 0.0
-            with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            with torch.no_grad(), torch.amp.autocast(autocast_device, dtype=torch.bfloat16, enabled=amp_enabled):
                 for features, coords, labels in val_loader:
-                    indices = torch.randperm(features.shape[0])[:K]
-                    features = features.to(device)[indices]
-                    coords = coords.long().to(device)[indices]
+                    features, coords = sample_patch_bag(features, coords, k)
+                    features = features.to(device_obj, non_blocking=True)
+                    coords = coords.long().to(device_obj, non_blocking=True)
+                    labels = labels.to(device_obj, non_blocking=True)
                     try:
-                        logits = model(features, coords, torch.tensor(1024).int().to(device), **kwargs)
+                        logits = model(features, coords, patch_size_tensor, **kwargs)
                     except Exception:
                         model.cpu()
-                        logits = model(features, coords, torch.tensor(1024).int().cpu(), **kwargs)
-                        model.to(device)
+                        logits = model(features.cpu(), coords.cpu(), torch.tensor(patch_size).int().cpu(), **kwargs)
+                        model.to(device_obj)
                     val_loss = loss_fn(logits, labels.to(logits.device))
                     preds_val.append(logits.argmax(1).cpu().numpy())
-                    targets_val.append(labels.numpy())
+                    targets_val.append(labels.cpu().numpy())
                     total_val_loss += val_loss.item()
 
             avg_val_loss = total_val_loss / len(val_loader)
@@ -172,7 +204,17 @@ def train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device,
     return model
 
 
-def evaluate(test_loader, model, num_classes: int, device: str, prefix: str, save_location: str = None, **kwargs):
+def evaluate(
+    test_loader,
+    model,
+    num_classes: int,
+    device: str,
+    prefix: str,
+    save_location: str = None,
+    k: int = K,
+    patch_size: int = PATCH_SIZE,
+    **kwargs,
+):
     """Evaluate model on a test set and optionally save raw outputs.
 
     Args:
@@ -187,17 +229,21 @@ def evaluate(test_loader, model, num_classes: int, device: str, prefix: str, sav
         eval_metrics dict.
     """
     preds_all, probs_all, targets_all = [], [], []
-    with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+    device_obj = torch.device(device)
+    amp_enabled = device_obj.type == "cuda"
+    autocast_device = "cuda" if amp_enabled else "cpu"
+    patch_size_tensor = torch.tensor(patch_size, dtype=torch.int32, device=device_obj)
+    with torch.no_grad(), torch.amp.autocast(autocast_device, dtype=torch.bfloat16, enabled=amp_enabled):
         for features, coords, label in tqdm(test_loader):
-            indices = torch.randperm(features.shape[0])[:K]
-            features = features.to(device)[indices]
-            coords = coords.long().to(device)[indices]
+            features, coords = sample_patch_bag(features, coords, k)
+            features = features.to(device_obj, non_blocking=True)
+            coords = coords.long().to(device_obj, non_blocking=True)
             try:
-                logits = model(features, coords, torch.tensor(1024).int().to(device), **kwargs)
+                logits = model(features, coords, patch_size_tensor, **kwargs)
             except Exception:
                 model.cpu()
-                logits = model(features, coords, torch.tensor(1024).int().cpu(), **kwargs)
-                model.to(device)
+                logits = model(features.cpu(), coords.cpu(), torch.tensor(patch_size).int().cpu(), **kwargs)
+                model.to(device_obj)
 
             logits = logits.float()
             preds = logits.argmax(1)
@@ -235,6 +281,14 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", type=str, default=None,
                         help="Directory to save per-task finetuned checkpoints")
     parser.add_argument("--use_wandb", action="store_true", help="Enable weights and biases tracking")
+    parser.add_argument("--disable_wandb", action="store_true", help="Disable wandb even if enabled in config")
+    parser.add_argument("--num_workers", type=int, default=None,
+                        help="Override DataLoader workers. Use 0 to debug HDF5/IO stalls.")
+    parser.add_argument("--k", type=int, default=None,
+                        help="Patch sampling budget per slide. Use 0 for the full WSI feature bag.")
+    parser.add_argument("--patch_size", type=int, default=None)
+    parser.add_argument("--debug_batches", action="store_true",
+                        help="Print fetch time and patch count for every train batch.")
     args = parser.parse_args()
 
     cfg = load_config(default_filename="train.yaml")
@@ -244,7 +298,11 @@ if __name__ == "__main__":
     lr = float(args.lr if args.lr is not None else train_cfg.get("lr", 1e-5))
     weight_decay = float(args.weight_decay if args.weight_decay is not None else train_cfg.get("weight_decay", 1e-4))
     save_dir = args.save_dir if args.save_dir is not None else train_cfg.get("save_dir", "./checkpoints/finetuned")
-    use_wandb = args.use_wandb or train_cfg.get("use_wandb", False)
+    use_wandb = (args.use_wandb or train_cfg.get("use_wandb", False)) and not args.disable_wandb
+    num_workers = args.num_workers if args.num_workers is not None else train_cfg.get("num_workers", None)
+    k = int(args.k if args.k is not None else train_cfg.get("k", K))
+    patch_size = int(args.patch_size if args.patch_size is not None else train_cfg.get("patch_size", PATCH_SIZE))
+    debug_batches = bool(args.debug_batches or train_cfg.get("debug_batches", False))
 
     if use_wandb:
         try:
@@ -254,9 +312,10 @@ if __name__ == "__main__":
             use_wandb = False
 
     device_str = str(device)
-    num_tasks = 6
-    num_classes = [2, 3, 2, 2, 2, 2]
     seq_dataset = Sequential_Generic_MIL_Dataset()
+    num_classes = seq_dataset.num_classes
+    num_tasks = len(num_classes)
+    dict_classes = get_dict_classes(num_classes)
 
     # Load TITAN once for prompt encoding
     titan_model = AutoModel.from_pretrained('MahmoodLab/TITAN', trust_remote_code=True)
@@ -268,7 +327,11 @@ if __name__ == "__main__":
         os.makedirs(fold_dir, exist_ok=True)
 
         for task_id in range(num_tasks):
-            train_loader, val_loader, test_loader = seq_dataset.get_data_loaders(fold_id, task_id)
+            train_loader, val_loader, test_loader = seq_dataset.get_data_loaders(
+                fold_id,
+                task_id,
+                num_workers=num_workers,
+            )
 
             if use_wandb:
                 import wandb
@@ -281,6 +344,9 @@ if __name__ == "__main__":
                         "num_epochs": num_epochs,
                         "lr": lr,
                         "weight_decay": weight_decay,
+                        "num_workers": num_workers if num_workers is not None else seq_dataset.num_workers,
+                        "k": k,
+                        "patch_size": patch_size,
                     },
                     reinit=True
                 )
@@ -290,7 +356,7 @@ if __name__ == "__main__":
             mlp.bias.data.zero_()
 
             # Initialize MLP weights from class-aware prompt prototypes
-            col_lo, col_hi = DICT_CLASSES[task_id]
+            col_lo, col_hi = dict_classes[task_id]
             prompt_prototypes = classifier[:, col_lo:col_hi + 1]
             mlp.weight.data = prompt_prototypes.T
 
@@ -300,7 +366,19 @@ if __name__ == "__main__":
                 param.requires_grad = False
 
             start = time.time()
-            model = train(train_loader, val_loader, model, num_epochs, lr, weight_decay, device_str, use_wandb=use_wandb)
+            model = train(
+                train_loader,
+                val_loader,
+                model,
+                num_epochs,
+                lr,
+                weight_decay,
+                device_str,
+                use_wandb=use_wandb,
+                k=k,
+                patch_size=patch_size,
+                debug_batches=debug_batches,
+            )
             elapsed = time.time() - start
             print(f"Fold {fold_id}, Task {task_id}: training took {elapsed:.1f}s")
 

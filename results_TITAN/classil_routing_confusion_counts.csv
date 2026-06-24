@@ -1,0 +1,11 @@
+true_task,true_task_name,pred_0_camelyon17,pred_1_brca,pred_2_rcc,pred_3_nsclc,pred_4_esca,pred_5_tgct,pred_6_cesc,pred_7_bracs,pred_8_herohe,pred_9_ubc_ocean
+0,camelyon17,927,34,2,0,3,0,0,5,29,0
+1,brca,10,472,1,6,11,3,12,9,282,9
+2,rcc,0,0,860,1,0,3,0,0,0,1
+3,nsclc,3,2,5,817,18,4,10,0,3,1
+4,esca,17,0,0,4,616,0,26,0,0,7
+5,tgct,22,0,0,2,16,290,40,2,0,9
+6,cesc,4,0,15,31,909,17,269,5,5,25
+7,bracs,11,82,0,0,0,2,1,376,109,0
+8,herohe,3,346,0,11,7,1,14,41,89,0
+9,ubc_ocean,1,0,4,0,2,17,32,2,0,482

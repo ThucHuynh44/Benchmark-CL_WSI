@@ -4,7 +4,7 @@ Continual OPCM (Orthogonal Projection-based Continual Model Merging).
 
 Usage:
     python scripts/merge.py \
-        --num_tasks 6 \
+        --num_tasks 10 \
         --src_finetuned_checkpoints /path/to/finetuned/checkpoints \
         --des_merged_checkpoints /path/to/merged/checkpoints/
 """
@@ -127,7 +127,7 @@ def _filter_backbone_weights(raw_state_dict: dict) -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Continual OPCM model merging")
     parser.add_argument("--num_tasks", type=int, default=None)
-    parser.add_argument("--src_finetuned_checkpoints", type=str, default=None,
+    parser.add_argument("--src_finetuned_checkpoints", "--src_finedtuned_checkpoints", type=str, default=None,
                         help="Directory containing per-task finetuned checkpoints")
     parser.add_argument("--des_merged_checkpoints", type=str, default=None,
                         help="Output directory for merged checkpoints")
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     cfg = load_config(default_filename="merge.yaml")
     merge_cfg = cfg.get("merging", {})
 
-    num_tasks = int(args.num_tasks if args.num_tasks is not None else merge_cfg.get("num_tasks", 6))
+    num_tasks = int(args.num_tasks if args.num_tasks is not None else merge_cfg.get("num_tasks", 10))
     src_finetuned_checkpoints = args.src_finetuned_checkpoints if args.src_finetuned_checkpoints is not None else merge_cfg.get("src_finetuned_checkpoints", "./checkpoints/finetuned")
     des_merged_checkpoints = args.des_merged_checkpoints if args.des_merged_checkpoints is not None else merge_cfg.get("des_merged_checkpoints", "./checkpoints/merged")
     use_wandb = args.use_wandb or merge_cfg.get("use_wandb", False)

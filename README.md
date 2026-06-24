@@ -23,9 +23,15 @@ MergeSlide/
 │   ├── prompts.py           # Class-aware prompt definitions for all 6 TCGA tasks
 │   └── utils.py             # Metrics, seeding, and model-merging utilities
 ├── configs/
-│   └── dataset_paths.py     # ⚙️  Edit this file to set your dataset root paths
+│   ├── datasets.yaml        # Dataset roots, annotations, feature paths, split dirs
+│   ├── train.yaml           # Per-task finetuning config
+│   ├── merge.yaml           # OPCM model-merging config
+│   └── eval.yaml            # CLASS-IL/TASK-IL evaluation config
 ├── scripts/
 │   ├── train.py             # Per-task finetuning  (replaces train_random_sampling.py)
+│   ├── train_derpp.py       # DER++ continual baseline with TITAN, no prompts
+│   ├── train_agem.py        # A-GEM continual baseline with TITAN, no prompts
+│   ├── train_er_ace.py      # ER-ACE continual baseline with TITAN, no prompts
 │   ├── merge.py             # Continual OPCM model merging  (replaces opcm_mergeslide.py)
 │   ├── eval_classil.py      # CLASS-IL evaluation: Acc/BACC/F1/AUC  (replaces test_classIL_task_prompt.py)
 │   ├── eval_classil_metrics.py  # CLASS-IL: mACC/FGT/BWT  (replaces test_classIL_task_prompt_other_metrics.py)
@@ -106,6 +112,32 @@ python train_random_sampling.py --save_dir /path/to/finetuned/checkpoints
 ```
 
 where `/path/to/finetuned/checkpoints` is the directory where you want the model checkpoints to be stored.
+
+### 3.2.1. DER++ Baseline with TITAN
+
+To train a continual DER++ baseline using TITAN's vision encoder and a randomly initialized global classifier head:
+
+```
+python scripts/train_derpp.py --save_dir ./checkpoints/derpp_titan
+```
+
+This baseline does not use class-aware prompts or TITAN's text encoder. It trains one global classifier over the accumulated task stream and stores replay samples in a reservoir buffer.
+
+To train A-GEM with the same TITAN/no-prompt setup:
+
+```
+python scripts/train_agem.py --save_dir ./checkpoints/agem_titan
+```
+
+A-GEM stores previous-task slide bags in memory and projects the current gradient when it conflicts with the replay-memory gradient.
+
+To train ER-ACE with the same TITAN/no-prompt setup:
+
+```
+python scripts/train_er_ace.py --save_dir ./checkpoints/er_ace_titan
+```
+
+ER-ACE applies asymmetric cross-entropy by masking previous-task classes in the current stream loss, while replay samples are trained with ordinary cross-entropy.
 
 ### 3.3. Model Merging
 

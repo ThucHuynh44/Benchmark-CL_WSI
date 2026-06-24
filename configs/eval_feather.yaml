@@ -1,0 +1,23 @@
+# MergeSlide -- FEATHER evaluation configuration for TASK-IL and CLASS-IL.
+# A null merge_model_path uses des_merged_checkpoints from merge_feather.yaml.
+feather_evaluation:
+  save_dir: "./checkpoints/feather_finetuned_k400"
+  merge_model_path: "./checkpoints/feather_merged_k400"
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 0
+  # 0 uses the complete WSI feature bag; a positive value samples up to k patches.
+  k: 400
+  patch_size: 256
+  taskil_output_csv: /mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/results/feather_taskil_results.csv
+  classil_output_csv: /mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/results/feather_classil_results.csv
+  # "concat" preserves naive task-head concatenation; "calibrated" loads a
+  # global classifier produced by scripts/calibrate_feather_classil.py.
+  classil_head_mode: "concat"
+  classil_calibration_dir: "./checkpoints/feather_classil_calibrated"
+  classil_calibration_epochs: 20
+  classil_calibration_lr: 1.0e-3
+  classil_calibration_weight_decay: 1.0e-4
+  classil_calibration_patience: 5
+  use_wandb: true
+  wandb_project: "MergeSlide-FEATHER"

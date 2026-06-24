@@ -6,3 +6,7 @@ training:
   save_dir: "./checkpoints/finetuned"
   use_wandb: true
   wandb_project: "MergeSlide-Finetuning"
+  # Use 0 while debugging shared-storage HDF5/IPC stalls.
+  num_workers: 0
+  k: 400
+  patch_size: 1024

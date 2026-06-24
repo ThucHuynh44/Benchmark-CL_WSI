@@ -1,0 +1,12 @@
+# MergeSlide -- FEATHER OPCM merge configuration.
+# Model identity, Hugging Face access, and training settings remain in feather.yaml.
+feather_merging:
+  src_finetuned_checkpoints: "./checkpoints/feather_finetuned_k400"
+  des_merged_checkpoints: "./checkpoints/feather_merged_k400"
+  num_folds: 10
+  num_tasks: 10
+  # null selects the number of classes in the first task automatically.
+  base_num_classes: null
+  from_pretrained_base: true
+  use_wandb: true
+  wandb_project: "MergeSlide-FEATHER"

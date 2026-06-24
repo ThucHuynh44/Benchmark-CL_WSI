@@ -1,6 +1,6 @@
 # Local dataset config — contains personal paths, never commit this
 configs/datasets.yaml
-
+configs/feather.yaml
 # Python cache
 __pycache__/
 *.py[cod]
@@ -21,3 +21,4 @@ logs/
 .idea/
 
 wandb/
+configs/feather.yaml

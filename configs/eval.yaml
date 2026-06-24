@@ -1,0 +1,18 @@
+# MergeSlide — Evaluation Stage Configuration
+evaluation:
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 0
+  save_dir: "./checkpoints/finetuned"
+  merge_model_path: "./checkpoints/merged"
+
+  # CLASS-IL mode:
+  #   tcp   = route by task prompts, then use the predicted task head
+  #   naive = concatenate task heads and classify directly in global class space
+  mode: "tcp"
+
+  # Optional CSV outputs. CLI --output_csv overrides these.
+  classil_output_csv: null
+  classil_routing_confusion_csv: "/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/results/classil_routing_confusion.csv"
+  classil_metrics_output_csv: null
+  taskil_output_csv: "/mmlab_students/storageStudents/nguyenvd/Thuchd/Benchmark_WSI/MergeSlide/results/taskil.csv"
