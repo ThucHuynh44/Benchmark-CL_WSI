@@ -50,3 +50,59 @@ er_ace:
   task_free: false
   eval_after_task: true
   mask_unseen_eval: true
+
+ewc_on:
+  num_epochs: 10
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  buffer_size: 0
+  e_lambda: 1.0
+  gamma: 1.0
+  save_dir: "./checkpoints/feather_ewc_on_fullpatch"
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 4
+  # 0 uses the complete WSI feature bag; a positive value samples up to k patches.
+  k: 0
+  seed: 0
+  freeze_backbone: false
+  eval_after_task: true
+  mask_unseen_eval: true
+
+lwf:
+  num_epochs: 10
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  buffer_size: 0
+  alpha: 0.5
+  softmax_temp: 2.0
+  save_dir: "./checkpoints/feather_lwf_fullpatch"
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 4
+  # 0 uses the complete WSI feature bag; a positive value samples up to k patches.
+  k: 0
+  seed: 0
+  freeze_backbone: false
+  eval_after_task: true
+  mask_unseen_eval: true
+
+lwsr:
+  num_epochs: 10
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  buffer_size: 10
+  minibatch_size: 4
+  pair_loss_weight: 1.0
+  ce_loss_weight: 1.0
+  dc_loss_weight: 0.01
+  save_dir: "./checkpoints/feather_lwsr_buffer10_fullpatch"
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 4
+  # 0 uses the complete WSI feature bag; a positive value samples up to k patches.
+  k: 0
+  seed: 0
+  freeze_backbone: false
+  eval_after_task: true
+  mask_unseen_eval: true

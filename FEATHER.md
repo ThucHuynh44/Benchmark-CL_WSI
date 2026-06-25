@@ -70,8 +70,8 @@ text-prompt embeddings.
 
 ## Continual Baselines
 
-FEATHER versions of DER++, A-GEM, and ER-ACE reuse the original replay and
-gradient-projection logic while replacing the TITAN global classifier with
+FEATHER versions of DER++, A-GEM, ER-ACE, online EWC, and LwF reuse the
+continual-learning loop while replacing the TITAN global classifier with
 FEATHER ABMIL. They share `configs/feather.yaml` and use per-method settings
 from `configs/feather_continual.yaml`.
 
@@ -79,9 +79,33 @@ from `configs/feather_continual.yaml`.
 python scripts/train_feather_continual.py --method derpp
 python scripts/train_feather_continual.py --method agem
 python scripts/train_feather_continual.py --method er_ace
+python scripts/train_feather_continual.py --method ewc_on
+python scripts/train_feather_continual.py --method lwf
 ```
 
 For a short smoke run, add `--num_folds 1 --num_tasks 1 --num_epochs 1 --k 64`.
+
+Evaluate TASK-IL for continual checkpoints with oracle task masking:
+
+```bash
+python scripts/eval_feather_taskil_masked_baselines.py --method derpp --final_only
+python scripts/eval_feather_taskil_masked_baselines.py --method agem --final_only
+python scripts/eval_feather_taskil_masked_baselines.py --method er_ace --final_only
+python scripts/eval_feather_taskil_masked_baselines.py --method ewc_on --final_only
+python scripts/eval_feather_taskil_masked_baselines.py --method lwf --final_only
+```
+
+Without `--final_only`, the evaluator writes the full continual matrix for
+every available `after_task`.
+
+The FEATHER LwF implementation follows Mammoth's classifier warm-up: from
+task 2 onward, it runs an SGD-only warm-up of the new classifier rows for
+`num_epochs` before the main LwF training loop.
+
+Each continual run writes benchmark artifacts inside its method `save_dir`:
+`run_manifest.json`, `eval_matrix.csv`, `per_slide_predictions.csv`,
+`per_fold_summary.csv`, `per_task_summary.csv`, and one CSV confusion matrix
+for each `(fold, after_task, eval_task)` result.
 
 The FEATHER model must expose a final `nn.Linear` classifier with
 `out_features=num_classes`. MergeSlide keeps that layer per task, merges every

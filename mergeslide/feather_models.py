@@ -151,8 +151,8 @@ def sample_patch_bag(
     return features[indices], sampled_coords
 
 
-def get_feather_classifier_state_keys(model: nn.Module, num_classes: int) -> Tuple[str, ...]:
-    """Return the state-dict keys for FEATHER's final linear classifier."""
+def _find_feather_classifier(model: nn.Module, num_classes: int) -> Tuple[str, nn.Linear]:
+    """Locate FEATHER's final linear classifier by its output dimension."""
     candidates = []
     for module_name, module in model.named_modules():
         if not isinstance(module, nn.Linear) or module.out_features != num_classes:
@@ -169,6 +169,18 @@ def get_feather_classifier_state_keys(model: nn.Module, num_classes: int) -> Tup
     # Prefer an explicitly named classifier/head; otherwise the final matching linear layer.
     named_candidates = [candidate for candidate in candidates if candidate[0]]
     _, module_name, module = (named_candidates or candidates)[-1]
+    return module_name, module
+
+
+def get_feather_classifier_module(model: nn.Module, num_classes: int) -> nn.Linear:
+    """Return FEATHER's final linear classifier module."""
+    _, module = _find_feather_classifier(model, num_classes)
+    return module
+
+
+def get_feather_classifier_state_keys(model: nn.Module, num_classes: int) -> Tuple[str, ...]:
+    """Return the state-dict keys for FEATHER's final linear classifier."""
+    module_name, module = _find_feather_classifier(model, num_classes)
     keys = [f"{module_name}.weight"]
     if module.bias is not None:
         keys.append(f"{module_name}.bias")
