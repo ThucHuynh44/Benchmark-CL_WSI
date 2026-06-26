@@ -51,6 +51,7 @@ from mergeslide.feather_models import (
     prepare_hf_token_env,
 )
 from mergeslide.lwsr import LwsrFEATHER
+from mergeslide.micil import MicilFEATHER
 from mergeslide.models import cosine_lr
 from mergeslide.lwf import Lwf
 from mergeslide.utils import seed_torch
@@ -59,7 +60,7 @@ from mergeslide.utils import seed_torch
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATHER_CONFIG = REPO_ROOT / "configs" / "feather.yaml"
 CONTINUAL_CONFIG = REPO_ROOT / "configs" / "feather_continual.yaml"
-METHODS = ("derpp", "agem", "er_ace", "ewc_on", "lwf", "lwsr")
+METHODS = ("derpp", "agem", "er_ace", "ewc_on", "lwf", "lwsr", "micil")
 
 
 def _load_yaml(path: Path) -> dict:
@@ -157,10 +158,27 @@ def _train_one_task(
         }
         if method_name == "feather_agem":
             log_values["train/projection_rate"] = projected_steps / max(len(train_loader), 1)
-        tqdm.write(
-            f"[FEATHER {method_name}] task={task_id} epoch={epoch} "
-            f"loss={avg_loss:.4f} buffer={int(last_stats.get('buffer_size', 0))}"
-        )
+        if method_name == "feather_micil":
+            tqdm.write(
+                f"[FEATHER {method_name}] task={task_id} epoch={epoch} "
+                f"avg_loss={avg_loss:.4f} "
+                f"total_loss={float(last_stats.get('total_loss', avg_loss)):.4f} "
+                f"ce_loss={float(last_stats.get('ce_loss', 0.0)):.4f} "
+                f"kd_loss={float(last_stats.get('kd_loss', 0.0)):.4f} "
+                f"em_loss={float(last_stats.get('em_loss', 0.0)):.4f} "
+                f"buffer_len={int(last_stats.get('buffer_len', last_stats.get('buffer_size', 0)))} "
+                f"old_classes={int(last_stats.get('old_classes', 0))} "
+                f"seen_classes={int(last_stats.get('seen_classes', 0))} "
+                f"logits_shape=({int(last_stats.get('logits_batch', 0))}, "
+                f"{int(last_stats.get('logits_dim', 0))}) "
+                f"embedding_shape=({int(last_stats.get('embedding_batch', 0))}, "
+                f"{int(last_stats.get('embedding_dim', 0))})"
+            )
+        else:
+            tqdm.write(
+                f"[FEATHER {method_name}] task={task_id} epoch={epoch} "
+                f"loss={avg_loss:.4f} buffer={int(last_stats.get('buffer_size', 0))}"
+            )
         if use_wandb:
             import wandb
             wandb.log(log_values)
@@ -569,6 +587,10 @@ def main() -> None:
     parser.add_argument("--pair_loss_weight", type=float, default=None)
     parser.add_argument("--ce_loss_weight", type=float, default=None)
     parser.add_argument("--dc_loss_weight", type=float, default=None)
+    parser.add_argument("--kd_loss_weight", type=float, default=None)
+    parser.add_argument("--em_loss_weight", type=float, default=None)
+    parser.add_argument("--weight_norm", dest="weight_norm", action="store_true", default=None)
+    parser.add_argument("--no_weight_norm", dest="weight_norm", action="store_false", default=None)
     parser.add_argument("--save_dir", type=str, default=None)
     parser.add_argument("--num_folds", type=int, default=None)
     parser.add_argument("--num_tasks", type=int, default=None)
@@ -601,6 +623,8 @@ def main() -> None:
     pair_loss_weight = float(_cfg_value(args, method_cfg, "pair_loss_weight", 0.5))
     ce_loss_weight = float(_cfg_value(args, method_cfg, "ce_loss_weight", 0.5))
     dc_loss_weight = float(_cfg_value(args, method_cfg, "dc_loss_weight", 0.5))
+    kd_loss_weight = float(_cfg_value(args, method_cfg, "kd_loss_weight", 10.0))
+    em_loss_weight = float(_cfg_value(args, method_cfg, "em_loss_weight", 1.0))
     save_dir = str(_cfg_value(args, method_cfg, "save_dir", f"./checkpoints/feather_{args.method}"))
     num_folds = int(_cfg_value(args, method_cfg, "num_folds", 10))
     num_workers = int(_cfg_value(args, method_cfg, "num_workers", feather_cfg.get("num_workers", 0)))
@@ -610,6 +634,7 @@ def main() -> None:
     from_pretrained = bool(feather_cfg.get("from_pretrained", True)) and not args.no_pretrained
     freeze_backbone = bool(args.freeze_backbone or method_cfg.get("freeze_backbone", False))
     task_free = bool(args.task_free or method_cfg.get("task_free", False))
+    weight_norm = bool(args.weight_norm if args.weight_norm is not None else method_cfg.get("weight_norm", False))
     eval_after_task = bool((not args.no_eval_after_task) and method_cfg.get("eval_after_task", True))
     mask_unseen_eval = bool((not args.no_mask_unseen_eval) and method_cfg.get("mask_unseen_eval", True))
     use_wandb = (args.use_wandb or feather_cfg.get("use_wandb", False)) and not args.disable_wandb
@@ -646,10 +671,13 @@ def main() -> None:
         "e_lambda": e_lambda if args.method == "ewc_on" else None,
         "gamma": gamma if args.method == "ewc_on" else None,
         "softmax_temp": softmax_temp if args.method == "lwf" else None,
-        "minibatch_size": minibatch_size if args.method == "lwsr" else None,
+        "minibatch_size": minibatch_size if args.method in ("lwsr", "micil") else None,
         "pair_loss_weight": pair_loss_weight if args.method == "lwsr" else None,
-        "ce_loss_weight": ce_loss_weight if args.method == "lwsr" else None,
+        "ce_loss_weight": ce_loss_weight if args.method in ("lwsr", "micil") else None,
         "dc_loss_weight": dc_loss_weight if args.method == "lwsr" else None,
+        "kd_loss_weight": kd_loss_weight if args.method == "micil" else None,
+        "em_loss_weight": em_loss_weight if args.method == "micil" else None,
+        "weight_norm": weight_norm if args.method == "micil" else None,
         "num_tasks": num_tasks,
         "k": k,
         "patch_size": patch_size,
@@ -789,7 +817,7 @@ def main() -> None:
                 softmax_temp=softmax_temp,
                 patch_size=patch_size,
             )
-        else:
+        elif args.method == "lwsr":
             trainer = LwsrFEATHER(
                 model=model,
                 optimizer=optimizer,
@@ -803,6 +831,23 @@ def main() -> None:
                 patch_size=patch_size,
                 seed=seed + fold_id,
             )
+        elif args.method == "micil":
+            trainer = MicilFEATHER(
+                model=model,
+                optimizer=optimizer,
+                device=device,
+                buffer_size=buffer_size,
+                minibatch_size=minibatch_size,
+                ce_loss_weight=ce_loss_weight,
+                kd_loss_weight=kd_loss_weight,
+                em_loss_weight=em_loss_weight,
+                weight_norm=weight_norm,
+                num_classes=total_classes,
+                patch_size=patch_size,
+                seed=seed + fold_id,
+            )
+        else:
+            raise ValueError(f"Unsupported FEATHER continual method: {args.method}")
 
         for task_id in range(num_tasks):
             start = time.time()
@@ -821,6 +866,11 @@ def main() -> None:
                     warmup_epochs=num_epochs,
                     warmup_lr=lr,
                     k=k,
+                )
+            elif args.method == "micil":
+                trainer.begin_task(
+                    past_classes=offsets[task_id],
+                    seen_classes=seen_classes,
                 )
             steps = max(1, len(train_loader) * num_epochs)
             scheduler = cosine_lr(
@@ -869,6 +919,13 @@ def main() -> None:
                     k=k,
                 )
                 print(f"[FEATHER lwsr] added {added} WSI to replay buffer")
+            elif args.method == "micil":
+                added = trainer.end_task(
+                    train_loader,
+                    label_offset=offsets[task_id],
+                    k=k,
+                )
+                print(f"[FEATHER micil] added {added} WSI to replay buffer")
 
             elapsed = time.time() - start
             fold_training_time += elapsed

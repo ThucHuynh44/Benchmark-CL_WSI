@@ -42,7 +42,7 @@ from mergeslide.utils import seed_torch
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATHER_CONFIG = REPO_ROOT / "configs" / "feather.yaml"
 CONTINUAL_CONFIG = REPO_ROOT / "configs" / "feather_continual.yaml"
-METHODS = ("derpp", "agem", "er_ace", "ewc_on", "lwf", "lwsr")
+METHODS = ("derpp", "agem", "er_ace", "ewc_on", "lwf", "lwsr", "micil")
 
 
 def _load_yaml(path: Path) -> dict:
