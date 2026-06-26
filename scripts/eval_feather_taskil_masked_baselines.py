@@ -7,6 +7,8 @@ scripts/eval_taskil_masked_baselines.py, but loads FEATHER global-head
 checkpoints from train_feather_continual.py.
 
 Examples:
+    python scripts/eval_feather_taskil_masked_baselines.py --method naive --final_only
+    python scripts/eval_feather_taskil_masked_baselines.py --method joint
     python scripts/eval_feather_taskil_masked_baselines.py --method lwf
     python scripts/eval_feather_taskil_masked_baselines.py --method ewc_on --final_only
     python scripts/eval_feather_taskil_masked_baselines.py --method derpp --num_folds 1
@@ -42,7 +44,7 @@ from mergeslide.utils import seed_torch
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATHER_CONFIG = REPO_ROOT / "configs" / "feather.yaml"
 CONTINUAL_CONFIG = REPO_ROOT / "configs" / "feather_continual.yaml"
-METHODS = ("derpp", "agem", "er_ace", "ewc_on", "lwf", "lwsr", "micil")
+METHODS = ("naive", "joint", "derpp", "agem", "er_ace", "ewc_on", "lwf", "lwsr", "micil")
 
 
 def _load_yaml(path: Path) -> dict:
@@ -271,7 +273,7 @@ def main() -> None:
     fold_end = int(args.fold_end if args.fold_end is not None else num_folds)
     if args.after_task is not None:
         after_tasks = [int(args.after_task)]
-    elif args.final_only:
+    elif args.final_only or args.method == "joint":
         after_tasks = [num_tasks - 1]
     else:
         after_tasks = list(range(num_tasks))

@@ -723,6 +723,30 @@ class ConcatDataset(Dataset):
         return self.datasets[dataset_idx][sample_idx]
 
 
+class LabelOffsetDataset(Dataset):
+    """Wrap a task-local dataset and expose labels in global class space."""
+
+    def __init__(self, dataset: Dataset, label_offset: int):
+        super().__init__()
+        self.dataset = dataset
+        self.label_offset = int(label_offset)
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getattr__(self, name):
+        dataset = self.__dict__.get("dataset")
+        if dataset is None:
+            raise AttributeError(name)
+        return getattr(dataset, name)
+
+    def __getitem__(self, idx):
+        features, coords, label = self.dataset[idx]
+        if torch.is_tensor(label):
+            label = int(label.item())
+        return features, coords, int(label) + self.label_offset
+
+
 # ---------------------------------------------------------------------------
 # Sequential stream of configured WSI tasks
 # ---------------------------------------------------------------------------
@@ -796,26 +820,37 @@ class Sequential_Generic_MIL_Dataset(ContinualDataset):
         self.val_loader = val_loader
         return train_loader, val_loader, test_loader
 
-    def get_joint_data_loaders(self, fold: int) -> Tuple[DataLoader, DataLoader, List[DataLoader]]:
+    def get_joint_data_loaders(
+        self,
+        fold: int,
+        num_tasks: int = None,
+        num_workers: int = None,
+    ) -> Tuple[DataLoader, DataLoader, List[DataLoader]]:
         """Return joint loaders over all tasks (for joint/multi-task baseline).
         Returns (train_loader, val_loader, test_loaders) where test_loaders is a
         list of per-task test loaders (one per task).
         """
+        task_count = self.N_TASKS if num_tasks is None else int(num_tasks)
+        if task_count <= 0 or task_count > self.N_TASKS:
+            raise ValueError(f"num_tasks must be in [1, {self.N_TASKS}], got {task_count}")
+        workers = self.num_workers if num_workers is None else int(num_workers)
         train_datasets, val_datasets, all_test_loaders = [], [], []
-        for n in range(self.N_TASKS):
+        label_offset = 0
+        for n in range(task_count):
             print(f"Loading dataset {n}")
             dataset = self.datasets[n]
             split_csv = f"{self.split_dirs[n]}/splits_{fold}.csv"
             train_dataset, val_dataset, test_dataset = dataset.return_splits(from_id=False, csv_path=split_csv)
-            train_datasets.append(train_dataset)
-            val_datasets.append(val_dataset)
-            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=self.num_workers, collate_fn=collate_MIL)
+            train_datasets.append(LabelOffsetDataset(train_dataset, label_offset))
+            val_datasets.append(LabelOffsetDataset(val_dataset, label_offset))
+            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=workers, collate_fn=collate_MIL)
             all_test_loaders.append(test_loader)
             self.test_loaders.append(test_loader)
+            label_offset += int(self.num_classes[n])
 
-        train_loader = DataLoader(ConcatDataset(train_datasets), batch_size=1, shuffle=True, num_workers=self.num_workers, collate_fn=collate_MIL)
-        val_loader   = DataLoader(ConcatDataset(val_datasets),   batch_size=1, shuffle=True, num_workers=self.num_workers, collate_fn=collate_MIL)
-        self.i = self.N_CLASSES_PER_TASK * self.N_TASKS
+        train_loader = DataLoader(ConcatDataset(train_datasets), batch_size=1, shuffle=True, num_workers=workers, collate_fn=collate_MIL)
+        val_loader   = DataLoader(ConcatDataset(val_datasets),   batch_size=1, shuffle=True, num_workers=workers, collate_fn=collate_MIL)
+        self.i = label_offset
         self.train_loader = train_loader
         self.val_loader = val_loader
         return train_loader, val_loader, all_test_loaders
