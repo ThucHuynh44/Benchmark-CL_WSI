@@ -3,6 +3,7 @@
 import torch
 import torch.nn as nn
 
+from mergeslide.continual_model import ContinualModel
 from mergeslide.feather_models import FeatherMILWrapper, get_feather_classifier_module
 
 
@@ -60,3 +61,50 @@ class FeatherGlobalClassifier(FeatherMILWrapper):
             )
 
         return {"logits": logits, "cls_token": cls_token.float()}
+
+
+class NaiveFinetuneFEATHER(ContinualModel):
+    """Sequential FEATHER finetuning without replay or forgetting constraints."""
+
+    NAME = "naive"
+    COMPATIBILITY = ("class-il", "task-il")
+
+    def __init__(
+        self,
+        model: FeatherGlobalClassifier,
+        optimizer: torch.optim.Optimizer,
+        device: torch.device,
+        patch_size: int = 512,
+    ) -> None:
+        super().__init__(model=model, optimizer=optimizer, device=device)
+        self.patch_size_value = int(patch_size)
+        self.loss_fn = nn.CrossEntropyLoss()
+        # Keep the checkpoint/logging schema shared with replay baselines.
+        self.buffer = ()
+
+    @property
+    def patch_size(self) -> torch.Tensor:
+        return torch.tensor(self.patch_size_value, dtype=torch.int32, device=self.device)
+
+    def observe(
+        self,
+        features: torch.Tensor,
+        coords: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> dict[str, float]:
+        """Run one optimization step on the current task batch only."""
+        self.model.train()
+        self.optimizer.zero_grad(set_to_none=True)
+
+        logits = self.model(features, coords, self.patch_size)
+        loss_ce = self.loss_fn(logits, labels.long())
+        if not torch.isfinite(loss_ce):
+            raise FloatingPointError("Encountered a non-finite FEATHER naive loss.")
+        loss_ce.backward()
+        self.optimizer.step()
+
+        return {
+            "loss": float(loss_ce.detach().cpu()),
+            "loss_ce": float(loss_ce.detach().cpu()),
+            "buffer_size": 0.0,
+        }

@@ -70,12 +70,15 @@ text-prompt embeddings.
 
 ## Continual Baselines
 
-FEATHER versions of DER++, A-GEM, ER-ACE, online EWC, and LwF reuse the
-continual-learning loop while replacing the TITAN global classifier with
-FEATHER ABMIL. They share `configs/feather.yaml` and use per-method settings
-from `configs/feather_continual.yaml`.
+FEATHER versions of naive finetuning, joint upper-bound training, DER++,
+A-GEM, ER-ACE, online EWC, and LwF reuse the continual-learning loop while
+replacing the TITAN global classifier with FEATHER ABMIL. They share
+`configs/feather.yaml` and use per-method settings from
+`configs/feather_continual.yaml`.
 
 ```bash
+python scripts/train_feather_continual.py --method naive
+python scripts/train_feather_continual.py --method joint
 python scripts/train_feather_continual.py --method derpp
 python scripts/train_feather_continual.py --method agem
 python scripts/train_feather_continual.py --method er_ace
@@ -88,6 +91,8 @@ For a short smoke run, add `--num_folds 1 --num_tasks 1 --num_epochs 1 --k 64`.
 Evaluate TASK-IL for continual checkpoints with oracle task masking:
 
 ```bash
+python scripts/eval_feather_taskil_masked_baselines.py --method naive --final_only
+python scripts/eval_feather_taskil_masked_baselines.py --method joint
 python scripts/eval_feather_taskil_masked_baselines.py --method derpp --final_only
 python scripts/eval_feather_taskil_masked_baselines.py --method agem --final_only
 python scripts/eval_feather_taskil_masked_baselines.py --method er_ace --final_only

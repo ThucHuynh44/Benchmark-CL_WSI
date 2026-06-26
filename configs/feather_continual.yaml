@@ -1,5 +1,37 @@
 # FEATHER continual-learning baselines. Common model/HF/W&B settings are read
 # from configs/feather.yaml.
+naive:
+  num_epochs: 10
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  buffer_size: 0
+  save_dir: "./checkpoints/feather_naive_fullpatch"
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 4
+  # 0 uses the complete WSI feature bag; a positive value samples up to k patches.
+  k: 0
+  seed: 0
+  freeze_backbone: false
+  eval_after_task: true
+  mask_unseen_eval: true
+
+joint:
+  num_epochs: 10
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  buffer_size: 0
+  save_dir: "./checkpoints/feather_joint_fullpatch"
+  num_folds: 10
+  num_tasks: 10
+  num_workers: 4
+  # 0 uses the complete WSI feature bag; a positive value samples up to k patches.
+  k: 0
+  seed: 0
+  freeze_backbone: false
+  eval_after_task: true
+  mask_unseen_eval: true
+
 derpp:
   num_epochs: 10
   lr: 1.0e-5
@@ -111,13 +143,13 @@ micil:
   num_epochs: 10
   lr: 1.0e-5
   weight_decay: 1.0e-4
-  buffer_size: 10
+  buffer_size: 30
   minibatch_size: 4
   ce_loss_weight: 1.0
   kd_loss_weight: 10.0
   em_loss_weight: 1.0
   weight_norm: true
-  save_dir: "./checkpoints/feather_micil_buffer10_fullpatch"
+  save_dir: "./checkpoints/feather_micil_buffer30_fullpatch"
   num_folds: 10
   num_tasks: 10
   num_workers: 4

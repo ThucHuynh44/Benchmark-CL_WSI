@@ -2,6 +2,8 @@
 Train FEATHER continual-learning baselines on the MergeSlide task stream.
 
 Examples:
+    python scripts/train_feather_continual.py --method naive
+    python scripts/train_feather_continual.py --method joint
     python scripts/train_feather_continual.py --method derpp
     python scripts/train_feather_continual.py --method agem --num_folds 1
     python scripts/train_feather_continual.py --method er_ace --num_tasks 3
@@ -42,7 +44,7 @@ from mergeslide.datasets import Sequential_Generic_MIL_Dataset
 from mergeslide.derpp import DerppTITAN
 from mergeslide.er_ace import ErAceTITAN
 from mergeslide.ewc_on import EwcOn
-from mergeslide.feather_continual import FeatherGlobalClassifier
+from mergeslide.feather_continual import FeatherGlobalClassifier, NaiveFinetuneFEATHER
 from mergeslide.feather_models import (
     DEFAULT_FEATURE_DIM,
     DEFAULT_FEATHER_MODEL_NAME,
@@ -60,7 +62,7 @@ from mergeslide.utils import seed_torch
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATHER_CONFIG = REPO_ROOT / "configs" / "feather.yaml"
 CONTINUAL_CONFIG = REPO_ROOT / "configs" / "feather_continual.yaml"
-METHODS = ("derpp", "agem", "er_ace", "ewc_on", "lwf", "lwsr", "micil")
+METHODS = ("naive", "joint", "derpp", "agem", "er_ace", "ewc_on", "lwf", "lwsr", "micil")
 
 
 def _load_yaml(path: Path) -> dict:
@@ -614,6 +616,8 @@ def main() -> None:
     lr = float(_cfg_value(args, method_cfg, "lr", 1e-5))
     weight_decay = float(_cfg_value(args, method_cfg, "weight_decay", 1e-4))
     buffer_size = int(_cfg_value(args, method_cfg, "buffer_size", 30))
+    if args.method in ("naive", "joint"):
+        buffer_size = 0
     alpha = float(_cfg_value(args, method_cfg, "alpha", 0.2))
     beta = float(_cfg_value(args, method_cfg, "beta", 0.2))
     e_lambda = float(_cfg_value(args, method_cfg, "e_lambda", 1.0))
@@ -628,7 +632,7 @@ def main() -> None:
     save_dir = str(_cfg_value(args, method_cfg, "save_dir", f"./checkpoints/feather_{args.method}"))
     num_folds = int(_cfg_value(args, method_cfg, "num_folds", 10))
     num_workers = int(_cfg_value(args, method_cfg, "num_workers", feather_cfg.get("num_workers", 0)))
-    k = int(_cfg_value(args, method_cfg, "k", feather_cfg.get("k", 400)))
+    k = int(_cfg_value(args, method_cfg, "k", feather_cfg.get("k", 0)))
     patch_size = int(args.patch_size if args.patch_size is not None else feather_cfg.get("patch_size", 256))
     seed = int(_cfg_value(args, method_cfg, "seed", 0))
     from_pretrained = bool(feather_cfg.get("from_pretrained", True)) and not args.no_pretrained
@@ -768,7 +772,14 @@ def main() -> None:
         model = FeatherGlobalClassifier(base_model, num_classes=total_classes).to(device)
         optimizer = _build_optimizer(model, lr=lr, weight_decay=weight_decay)
 
-        if args.method == "derpp":
+        if args.method in ("naive", "joint"):
+            trainer = NaiveFinetuneFEATHER(
+                model=model,
+                optimizer=optimizer,
+                device=device,
+                patch_size=patch_size,
+            )
+        elif args.method == "derpp":
             trainer = DerppTITAN(
                 model=model,
                 optimizer=optimizer,
@@ -849,6 +860,115 @@ def main() -> None:
         else:
             raise ValueError(f"Unsupported FEATHER continual method: {args.method}")
 
+        if args.method == "joint":
+            start = time.time()
+            train_loader, _, test_loaders = seq_dataset.get_joint_data_loaders(
+                fold_id,
+                num_tasks=num_tasks,
+                num_workers=num_workers,
+            )
+            final_task_id = num_tasks - 1
+            steps = max(1, len(train_loader) * num_epochs)
+            scheduler = cosine_lr(
+                optimizer=optimizer,
+                base_lr=lr,
+                warmup_length=max(1, int(steps * 0.1)),
+                steps=steps,
+            )
+            _train_one_task(
+                trainer,
+                train_loader,
+                method_name=method_name,
+                task_id=final_task_id,
+                label_offset=0,
+                num_epochs=num_epochs,
+                scheduler=scheduler,
+                device=device,
+                k=k,
+                use_wandb=use_wandb,
+            )
+            trainer.end_task()
+
+            elapsed = time.time() - start
+            fold_training_time += elapsed
+            print(f"[FEATHER {args.method}] fold={fold_id} joint training took {elapsed:.1f}s")
+            checkpoint_path = os.path.join(fold_dir, f"{prefix}_after_task_{final_task_id}.pt")
+            _save_checkpoint(
+                checkpoint_path,
+                model,
+                trainer,
+                method=args.method,
+                model_name=model_name,
+                fold_id=fold_id,
+                task_id=final_task_id,
+                num_classes=num_classes,
+                run_config=run_config,
+            )
+
+            if eval_after_task:
+                for eval_task_id, test_loader in enumerate(test_loaders):
+                    metrics, prediction_rows = _evaluate_task(
+                        model,
+                        test_loader,
+                        method_name=method_name,
+                        fold_id=fold_id,
+                        after_task=final_task_id,
+                        eval_task=eval_task_id,
+                        task_name=task_names[eval_task_id],
+                        label_offset=offsets[eval_task_id],
+                        task_num_classes=num_classes[eval_task_id],
+                        seen_classes=total_classes,
+                        total_classes=total_classes,
+                        device=device,
+                        k=k,
+                        patch_size=patch_size,
+                        mask_unseen=mask_unseen_eval,
+                        seed=seed,
+                        confusion_matrix_dir=confusion_matrix_dir,
+                    )
+                    row = {
+                        "method": method_name,
+                        "fold": fold_id,
+                        "mode": "class-il-seen" if mask_unseen_eval else "class-il-all",
+                        "after_task": final_task_id,
+                        "eval_task": eval_task_id,
+                        "task_name": task_names[eval_task_id],
+                        **metrics,
+                    }
+                    eval_rows.append(row)
+                    _append_csv(eval_matrix_path, [row], eval_matrix_fields)
+                    _append_csv(predictions_path, prediction_rows, prediction_fields)
+                    print(
+                        f"[FEATHER {args.method}] eval fold={fold_id} after={final_task_id} "
+                        f"task={eval_task_id} acc={metrics['acc']:.4f} bacc={metrics['bacc']:.4f}"
+                    )
+                    if use_wandb:
+                        import wandb
+                        wandb.log({
+                            "eval/after_task": final_task_id,
+                            "eval/task_id": eval_task_id,
+                            **{f"eval/{key}": value for key, value in metrics.items()},
+                        })
+
+            final_path = os.path.join(fold_dir, f"{prefix}_final.pt")
+            _save_checkpoint(
+                final_path,
+                model,
+                trainer,
+                method=args.method,
+                model_name=model_name,
+                fold_id=fold_id,
+                task_id=final_task_id,
+                num_classes=num_classes,
+                run_config=run_config,
+            )
+            if use_wandb:
+                import wandb
+                wandb.log({"train/final_buffer_size": len(trainer.buffer)})
+                wandb.finish()
+            fold_training_times[fold_id] = fold_training_time
+            continue
+
         for task_id in range(num_tasks):
             start = time.time()
             train_loader, _, _ = seq_dataset.get_data_loaders(
@@ -892,7 +1012,9 @@ def main() -> None:
                 use_wandb=use_wandb,
             )
 
-            if args.method == "agem":
+            if args.method == "naive":
+                trainer.end_task()
+            elif args.method == "agem":
                 quota = _memory_samples_for_task(buffer_size, num_tasks, task_id)
                 added = trainer.end_task(
                     train_loader=train_loader,
